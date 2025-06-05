@@ -6,7 +6,7 @@ import { invoke } from '@forge/bridge';
 import Notification from './components/Notifications';
 import AdminManagement from './views/AdminManagement';
 import TeamPage from './views/TeamPage';
-
+import NetworkErrorHandler from './components/NetworkErrorHandler';
 // Pages & Hooks
 import CalendarPage from './views/CalendarPage';
 import RequestsPage from './views/RequestsPage';
@@ -29,8 +29,17 @@ const PTOManagementApp = () => {
     userId: null
   });
 
-  // Custom hooks
-  const { currentUser, loading: userLoading, error: userError, isAdmin } = useCurrentUser();
+ // Custom hooks
+  const { 
+    currentUser, 
+    loading: userLoading, 
+    error: userError, 
+    isAdmin,
+    refreshUser,
+    testConnectivity,
+    retryCount
+  } = useCurrentUser();
+  
   const { 
     requests: ptoRequests, 
     loading: requestsLoading, 
@@ -55,40 +64,60 @@ const PTOManagementApp = () => {
         }
       } catch (error) {
         console.error('Error loading user teams:', error);
+        // Don't show notification for team loading errors, it's not critical
       }
     };
 
     loadUserTeams();
   }, [currentUser]);
 
-  // Initialize app
+  // Initialize app with admin setup
   useEffect(() => {
     const initializeApp = async () => {
       setAppLoading(true);
       try {
-        console.log('🔧 Initializing PTO App...');
+        console.log('🔧 Initializing PTO App with Admin Setup...');
         
+        // Test connectivity first
+        const connectivityTest = await testConnectivity();
+        if (!connectivityTest.success) {
+          console.warn('⚠️ Connectivity test failed, but continuing with initialization...');
+        }
+        
+        // Initialize database and set up default admin
         const dbResult = await invoke('initializePTODatabaseWithTeamManagement');
         if (!dbResult.success) {
-          console.warn('Enhanced setup failed, trying regular init:', dbResult.message);
+          console.warn('Admin setup failed, trying regular init:', dbResult.message);
+          // Fallback to regular initialization
           const fallbackResult = await invoke('initializePTODatabase');
           if (!fallbackResult.success) {
             throw new Error(fallbackResult.message);
           }
+        } else {
+          console.log('✅ PTO App and Admin initialized:', dbResult.data);
         }
         
         console.log('✅ PTO App initialization complete');
         
       } catch (error) {
         console.error('❌ App initialization failed:', error);
-        showNotification('Failed to initialize app: ' + error.message, 'error');
+        
+        // Only show notification for non-network errors
+        if (!error.message.includes('timeout') && !error.message.includes('fetch failed')) {
+          showNotification('Failed to initialize app: ' + error.message, 'error');
+        }
       } finally {
         setAppLoading(false);
       }
     };
 
-    initializeApp();
-  }, []);
+    // Only initialize if we have a user or if there's no user error
+    if (currentUser || !userError) {
+      initializeApp();
+    } else {
+      setAppLoading(false);
+    }
+  }, [currentUser, userError, testConnectivity]);
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -106,16 +135,13 @@ const PTOManagementApp = () => {
 
   const handlePTOSubmit = async (ptoData) => {
     try {
-      // Validate manager selection
-      if (!ptoData.manager) {
-        showNotification('Please select a manager to approve your request', 'error');
-        return;
-      }
-
-      // Prepare request data with proper manager selection
       const requestData = {
         reporter: currentUser,
-        manager: ptoData.manager, // This comes from UserPicker component
+        manager: ptoData.manager || {
+          accountId: "manager-default",
+          displayName: "Manager",
+          emailAddress: "manager@company.com"
+        },
         startDate: selectedDates[0],
         endDate: selectedDates[selectedDates.length - 1],
         leaveType: ptoData.leaveType,
@@ -123,13 +149,11 @@ const PTOManagementApp = () => {
         dailySchedules: ptoData.dailySchedules
       };
       
-      console.log('📝 Submitting PTO request with manager:', ptoData.manager.displayName);
-      
       const result = await submitRequest(requestData);
       
       if (result.success) {
         setSelectedDates([]);
-        showNotification(`PTO request submitted successfully! ${ptoData.manager.displayName} will receive the approval request.`);
+        showNotification('PTO request submitted successfully!');
       } else {
         showNotification(result.message || 'Failed to submit PTO request', 'error');
       }
@@ -142,14 +166,10 @@ const PTOManagementApp = () => {
 
   const handleApproval = async (requestId, status, comment) => {
     try {
-      console.log(`🔄 Processing ${status} for request ${requestId}`);
-      
       const result = await updateRequestStatus(requestId, status, comment);
       
       if (result.success) {
         showNotification(`Request ${status} successfully!`);
-        // Refresh requests to update the UI
-        await fetchRequests();
       } else {
         showNotification(result.message || `Failed to ${status} request`, 'error');
       }
@@ -184,6 +204,58 @@ const PTOManagementApp = () => {
     }
   };
 
+  // Show network error handler if user loading failed
+  if (userError) {
+    return (
+      <NetworkErrorHandler
+        error={userError}
+        onRetry={refreshUser}
+        onTestConnectivity={testConnectivity}
+        loading={userLoading}
+        retryCount={retryCount}
+      />
+    );
+  }
+
+  // Show loading state during initialization
+  if (appLoading || userLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">
+            {userLoading ? 'Loading user information...' : 'Initializing PTO Management'}
+          </h2>
+          <p className="text-gray-600">
+            {userLoading ? 'Connecting to Jira...' : 'Setting up database and admin users...'}
+          </p>
+          {retryCount > 0 && (
+            <p className="text-sm text-yellow-600 mt-2">
+              Retry attempt {retryCount}/3
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+    // Don't render if no current user
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading user information...</p>
+          <button 
+            onClick={refreshUser}
+            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
   // Handle navigation from admin with filters
   const handleNavigateToCalendar = (tab, filters = {}) => {
     console.log('📅 Navigating to calendar with filters:', filters);

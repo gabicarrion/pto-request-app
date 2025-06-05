@@ -10,14 +10,27 @@ export class TeamUserService {
 
   // Initialize storage
   async initialize() {
-    const tables = [this.TEAMS_KEY, this.USERS_KEY, this.TEAM_MEMBERS_KEY];
-    
-    for (const table of tables) {
-      const existing = await storage.get(table);
-      if (!existing) {
-        await storage.set(table, []);
-        console.log(`✅ Created ${table} table`);
+    try {
+      const tables = [this.TEAMS_KEY, this.USERS_KEY, this.TEAM_MEMBERS_KEY];
+      
+      for (const table of tables) {
+        const existing = await storage.get(table);
+        if (!existing) {
+          await storage.set(table, []);
+          console.log(`✅ Created ${table} table`);
+        }
       }
+      
+      return {
+        success: true,
+        message: 'TeamUserService initialized successfully'
+      };
+    } catch (error) {
+      console.error('❌ Error initializing TeamUserService:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to initialize TeamUserService'
+      };
     }
   }
 
@@ -28,16 +41,16 @@ export class TeamUserService {
       
       const newTeam = {
         id: `team-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        name: teamData.name,
-        description: teamData.description || '',
-        team_lead: teamData.team_lead || teamData.teamLead || '',
-        department: teamData.department || '',
-        color: teamData.color || '#667eea',
-        manager: teamData.manager || null,
+        name: teamData?.name || '',
+        description: teamData?.description || '',
+        team_lead: teamData?.team_lead || teamData?.teamLead || '',
+        department: teamData?.department || '',
+        color: teamData?.color || '#667eea',
+        manager: teamData?.manager || null,
         members: [],
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        created_by: teamData.createdBy || null
+        created_by: teamData?.createdBy || null
       };
 
       teams.push(newTeam);
@@ -60,6 +73,10 @@ export class TeamUserService {
 
   async updateTeam(teamData) {
     try {
+      if (!teamData?.id) {
+        throw new Error('Team ID is required for update');
+      }
+
       const teams = await storage.get(this.TEAMS_KEY) || [];
       const teamIndex = teams.findIndex(team => team.id === teamData.id);
 
@@ -69,7 +86,7 @@ export class TeamUserService {
 
       teams[teamIndex] = {
         ...teams[teamIndex],
-        name: teamData.name,
+        name: teamData.name || teams[teamIndex].name,
         description: teamData.description || '',
         team_lead: teamData.team_lead || teamData.teamLead || '',
         department: teamData.department || '',
@@ -98,6 +115,10 @@ export class TeamUserService {
 
   async deleteTeam(teamId, deletedBy) {
     try {
+      if (!teamId) {
+        throw new Error('Team ID is required for deletion');
+      }
+
       const teams = await storage.get(this.TEAMS_KEY) || [];
       const teamIndex = teams.findIndex(team => team.id === teamId);
 
@@ -166,21 +187,21 @@ export class TeamUserService {
       
       const newUser = {
         id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        first_name: userData.first_name || userData.firstName || '',
-        last_name: userData.last_name || userData.lastName || '',
-        display_name: userData.display_name || userData.displayName || '',
-        email_address: userData.email_address || userData.emailAddress || '',
-        jira_account_id: userData.jira_account_id || userData.jiraAccountId || '',
-        employment_type: userData.employment_type || userData.employmentType || 'full-time',
-        hire_date: userData.hire_date || userData.hireDate || '',
-        team_id: userData.team_id || userData.teamId || null,
-        capacity: userData.capacity || 40,
-        availability: userData.availability || this.getDefaultAvailability(),
-        avatar_url: userData.avatar_url || userData.avatarUrl || '',
-        status: userData.status || 'active',
+        first_name: userData?.first_name || userData?.firstName || '',
+        last_name: userData?.last_name || userData?.lastName || '',
+        display_name: userData?.display_name || userData?.displayName || '',
+        email_address: userData?.email_address || userData?.emailAddress || '',
+        jira_account_id: userData?.jira_account_id || userData?.jiraAccountId || '',
+        employment_type: userData?.employment_type || userData?.employmentType || 'full-time',
+        hire_date: userData?.hire_date || userData?.hireDate || '',
+        team_id: userData?.team_id || userData?.teamId || null,
+        capacity: userData?.capacity || 40,
+        availability: userData?.availability || this.getDefaultAvailability(),
+        avatar_url: userData?.avatar_url || userData?.avatarUrl || '',
+        status: userData?.status || 'active',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        created_by: userData.createdBy || null
+        created_by: userData?.createdBy || null
       };
 
       users.push(newUser);
@@ -203,6 +224,10 @@ export class TeamUserService {
 
   async updateUser(userData) {
     try {
+      if (!userData?.id) {
+        throw new Error('User ID is required for update');
+      }
+
       const users = await storage.get(this.USERS_KEY) || [];
       const userIndex = users.findIndex(user => user.id === userData.id);
 
@@ -247,6 +272,10 @@ export class TeamUserService {
 
   async deleteUser(userId, deletedBy) {
     try {
+      if (!userId) {
+        throw new Error('User ID is required for deletion');
+      }
+
       const users = await storage.get(this.USERS_KEY) || [];
       const userIndex = users.findIndex(user => user.id === userId);
 
@@ -291,6 +320,10 @@ export class TeamUserService {
 
   async getUserById(userId) {
     try {
+      if (!userId) {
+        throw new Error('User ID is required');
+      }
+
       const users = await storage.get(this.USERS_KEY) || [];
       const user = users.find(u => u.id === userId);
       
@@ -313,6 +346,10 @@ export class TeamUserService {
 
   async getUsersByTeam(teamId) {
     try {
+      if (!teamId) {
+        throw new Error('Team ID is required');
+      }
+
       const users = await storage.get(this.USERS_KEY) || [];
       const teamUsers = users.filter(user => user.team_id === teamId);
       
@@ -332,6 +369,10 @@ export class TeamUserService {
   // Team Member Management
   async addTeamMember(teamId, memberData) {
     try {
+      if (!teamId || !memberData) {
+        throw new Error('Team ID and member data are required');
+      }
+
       const teams = await storage.get(this.TEAMS_KEY) || [];
       const users = await storage.get(this.USERS_KEY) || [];
       
@@ -342,7 +383,10 @@ export class TeamUserService {
 
       // Create or update user
       let user;
-      const existingUserIndex = users.findIndex(u => u.jira_account_id === memberData.jira_account_id);
+      const existingUserIndex = users.findIndex(u => 
+        u.jira_account_id === memberData.jira_account_id || 
+        u.jira_account_id === memberData.accountId
+      );
       
       if (existingUserIndex !== -1) {
         // Update existing user
@@ -394,6 +438,10 @@ export class TeamUserService {
 
   async removeTeamMember(teamId, memberAccountId, removedBy) {
     try {
+      if (!teamId || !memberAccountId) {
+        throw new Error('Team ID and member account ID are required');
+      }
+
       const users = await storage.get(this.USERS_KEY) || [];
       const userIndex = users.findIndex(user => 
         user.team_id === teamId && 
@@ -446,6 +494,10 @@ export class TeamUserService {
   // Analytics and Reporting
   async getTeamAnalytics(teamId, dateRange = 'current_month') {
     try {
+      if (!teamId) {
+        throw new Error('Team ID is required');
+      }
+
       const teams = await storage.get(this.TEAMS_KEY) || [];
       const users = await storage.get(this.USERS_KEY) || [];
       const ptoRequests = await storage.get('pto_requests') || [];
@@ -550,6 +602,10 @@ export class TeamUserService {
 
   async getTeamPTORequests(teamId, dateRange = 'current_month') {
     try {
+      if (!teamId) {
+        throw new Error('Team ID is required');
+      }
+
       const users = await storage.get(this.USERS_KEY) || [];
       const ptoRequests = await storage.get('pto_requests') || [];
 
@@ -601,6 +657,13 @@ export class TeamUserService {
   // Integration with PTO system
   async getUserTeams(userId) {
     try {
+      if (!userId) {
+        return {
+          success: true,
+          data: []
+        };
+      }
+
       const teams = await storage.get(this.TEAMS_KEY) || [];
       const users = await storage.get(this.USERS_KEY) || [];
 
@@ -689,7 +752,11 @@ export class TeamUserService {
       
       if (ptoTeams.length === 0) {
         console.log('ℹ️ No PTO teams to migrate');
-        return { success: true, migrated: 0 };
+        return { 
+          success: true, 
+          migrated: 0,
+          message: 'No PTO teams found to migrate'
+        };
       }
 
       let migratedCount = 0;
@@ -705,7 +772,7 @@ export class TeamUserService {
         // Create enhanced team
         const enhancedTeam = {
           id: ptoTeam.id || `team-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          name: ptoTeam.name,
+          name: ptoTeam.name || 'Unnamed Team',
           description: ptoTeam.description || '',
           team_lead: ptoTeam.manager_id ? 
             (ptoTeam.manager?.displayName || 'Unknown') : '',
@@ -726,35 +793,39 @@ export class TeamUserService {
           const users = await storage.get(this.USERS_KEY) || [];
           
           for (const member of ptoTeam.members) {
-            const existingUser = users.find(u => 
-              u.jira_account_id === member.accountId ||
-              u.email_address === member.emailAddress
-            );
+            try {
+              const existingUser = users.find(u => 
+                u.jira_account_id === member.accountId ||
+                u.email_address === member.emailAddress
+              );
 
-            if (!existingUser) {
-              const newUser = {
-                id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                first_name: member.firstName || '',
-                last_name: member.lastName || '',
-                display_name: member.displayName || member.name || '',
-                email_address: member.emailAddress || '',
-                jira_account_id: member.accountId || '',
-                employment_type: 'full-time',
-                hire_date: member.hiringDate || '',
-                team_id: enhancedTeam.id,
-                capacity: 40,
-                availability: this.getDefaultAvailability(),
-                avatar_url: member.avatarUrl || '',
-                status: 'active',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                migrated_from: 'pto_teams'
-              };
-              users.push(newUser);
-            } else {
-              // Update existing user's team
-              existingUser.team_id = enhancedTeam.id;
-              existingUser.updated_at = new Date().toISOString();
+              if (!existingUser) {
+                const newUser = {
+                  id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                  first_name: member.firstName || '',
+                  last_name: member.lastName || '',
+                  display_name: member.displayName || member.name || '',
+                  email_address: member.emailAddress || '',
+                  jira_account_id: member.accountId || '',
+                  employment_type: 'full-time',
+                  hire_date: member.hiringDate || '',
+                  team_id: enhancedTeam.id,
+                  capacity: 40,
+                  availability: this.getDefaultAvailability(),
+                  avatar_url: member.avatarUrl || '',
+                  status: 'active',
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                  migrated_from: 'pto_teams'
+                };
+                users.push(newUser);
+              } else {
+                // Update existing user's team
+                existingUser.team_id = enhancedTeam.id;
+                existingUser.updated_at = new Date().toISOString();
+              }
+            } catch (memberError) {
+              console.warn('Error migrating member:', member, memberError);
             }
           }
           

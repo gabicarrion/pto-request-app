@@ -1,11 +1,11 @@
 import Resolver from '@forge/resolver';
 import { storage } from '@forge/api';
 import api, { route } from '@forge/api';
-import teamUserService from './services/team-user-service'
+import teamUserService from './services/team-user-service';
 
 const resolver = new Resolver();
 
-
+// Initialize Team User Service
 resolver.define('initializeTeamUserService', async (req) => {
   try {
     await teamUserService.initialize();
@@ -56,36 +56,165 @@ resolver.define('getCurrentUser', async (req) => {
   try {
     console.log('🔍 Fetching current user...');
     
-    const response = await api.asUser().requestJira(route`/rest/api/3/myself`);
+    // Add timeout and retry logic
+    const maxRetries = 3;
+    let lastError;
     
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`Attempt ${attempt}/${maxRetries} to fetch user`);
+        
+        // Use a longer timeout for the request
+        const response = await Promise.race([
+          api.asUser().requestJira(route`/rest/api/3/myself`),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Request timeout after 30 seconds')), 30000)
+          )
+        ]);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const userData = await response.json();
+        
+        console.log('✅ Successfully fetched user data');
+        return {
+          success: true,
+          data: {
+            accountId: userData.accountId,
+            displayName: userData.displayName,
+            emailAddress: userData.emailAddress,
+            avatarUrl: userData.avatarUrls?.['48x48'] || userData.avatarUrls?.['32x32'] || null
+          }
+        };
+        
+      } catch (error) {
+        lastError = error;
+        console.warn(`❌ Attempt ${attempt} failed:`, error.message);
+        
+        if (attempt < maxRetries) {
+          // Wait before retry (exponential backoff)
+          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+          console.log(`⏳ Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
     }
     
-    const userData = await response.json();
+    // If all retries failed, throw the last error
+    throw lastError;
+    
+  } catch (error) {
+    console.error('❌ Error fetching current user after all retries:', error);
+    
+    // Return a more specific error message based on the error type
+    let errorMessage = 'Failed to fetch current user: ';
+    
+    if (error.code === 'UND_ERR_CONNECT_TIMEOUT' || error.message.includes('timeout')) {
+      errorMessage += 'Connection timeout. Please check your internet connection and try again.';
+    } else if (error.message.includes('HTTP')) {
+      errorMessage += `Server error: ${error.message}`;
+    } else {
+      errorMessage += error.message;
+    }
     
     return {
-      success: true,
-      data: {
-        accountId: userData.accountId,
-        displayName: userData.displayName,
-        emailAddress: userData.emailAddress,
-        avatarUrl: userData.avatarUrls?.['48x48'] || userData.avatarUrls?.['32x32'] || null
+      success: false,
+      message: errorMessage,
+      error: {
+        code: error.code || 'UNKNOWN_ERROR',
+        type: 'NETWORK_ERROR'
       }
     };
-  } catch (error) {
-    console.error('❌ Error fetching current user:', error);
+  }
+});
+resolver.define('getCurrentUserFallback', async (req) => {
+  try {
+    console.log('🔍 Using fallback method to get current user...');
+    
+    // Try to get user info from request context first
+    if (req.context && req.context.accountId) {
+      console.log('✅ Found user in request context');
+      return {
+        success: true,
+        data: {
+          accountId: req.context.accountId,
+          displayName: req.context.displayName || 'Unknown User',
+          emailAddress: req.context.emailAddress || '',
+          avatarUrl: null
+        },
+        source: 'context'
+      };
+    }
+    
+    // If no context, return a generic error
     return {
       success: false,
-      message: 'Failed to fetch current user: ' + error.message
+      message: 'Unable to determine current user from context',
+      error: {
+        code: 'NO_USER_CONTEXT',
+        type: 'CONTEXT_ERROR'
+      }
+    };
+    
+  } catch (error) {
+    console.error('❌ Error in fallback user fetch:', error);
+    return {
+      success: false,
+      message: 'Fallback user fetch failed: ' + error.message
+    };
+  }
+});
+resolver.define('testConnectivity', async (req) => {
+  try {
+    console.log('🔗 Testing Jira API connectivity...');
+    
+    // Simple health check endpoint
+    const response = await Promise.race([
+      api.asUser().requestJira(route`/rest/api/3/serverInfo`),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connectivity test timeout')), 15000)
+      )
+    ]);
+    
+    if (response.ok) {
+      const serverInfo = await response.json();
+      return {
+        success: true,
+        message: 'Jira API connectivity is working',
+        data: {
+          serverTitle: serverInfo.serverTitle,
+          version: serverInfo.version,
+          timestamp: new Date().toISOString()
+        }
+      };
+    } else {
+      return {
+        success: false,
+        message: `Connectivity test failed: HTTP ${response.status}`,
+        status: response.status
+      };
+    }
+    
+  } catch (error) {
+    console.error('❌ Connectivity test failed:', error);
+    return {
+      success: false,
+      message: 'Connectivity test failed: ' + error.message,
+      error: {
+        code: error.code || 'CONNECTIVITY_ERROR',
+        type: 'NETWORK_ERROR'
+      }
     };
   }
 });
 
+
 // Search Jira Users
 resolver.define('getJiraUsers', async (req) => {
   try {
-    const { query } = req.payload;
+    const { query } = req.payload || {};
     
     if (!query || query.length < 2) {
       return { success: true, data: [] };
@@ -93,32 +222,65 @@ resolver.define('getJiraUsers', async (req) => {
 
     console.log('🔍 Searching users with query:', query);
     
-    const response = await api.asUser().requestJira(
-      route`/rest/api/3/user/search?query=${query}&maxResults=10`
-    );
+    const maxRetries = 2;
+    let lastError;
     
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await Promise.race([
+          api.asUser().requestJira(route`/rest/api/3/user/search?query=${query}&maxResults=10`),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('User search timeout')), 20000)
+          )
+        ]);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const users = await response.json();
+        
+        const userData = users.map(user => ({
+          accountId: user.accountId,
+          displayName: user.displayName,
+          emailAddress: user.emailAddress,
+          avatarUrl: user.avatarUrls?.['48x48'] || user.avatarUrls?.['32x32'] || null
+        }));
+
+        return {
+          success: true,
+          data: userData
+        };
+        
+      } catch (error) {
+        lastError = error;
+        console.warn(`❌ User search attempt ${attempt} failed:`, error.message);
+        
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
     }
     
-    const users = await response.json();
+    throw lastError;
     
-    const userData = users.map(user => ({
-      accountId: user.accountId,
-      displayName: user.displayName,
-      emailAddress: user.emailAddress,
-      avatarUrl: user.avatarUrls?.['48x48'] || user.avatarUrls?.['32x32'] || null
-    }));
-
-    return {
-      success: true,
-      data: userData
-    };
   } catch (error) {
     console.error('❌ Error searching users:', error);
+    
+    let errorMessage = 'Failed to search users: ';
+    if (error.code === 'UND_ERR_CONNECT_TIMEOUT' || error.message.includes('timeout')) {
+      errorMessage += 'Connection timeout. Please try again.';
+    } else {
+      errorMessage += error.message;
+    }
+    
     return {
       success: false,
-      message: 'Failed to search users: ' + error.message
+      message: errorMessage,
+      error: {
+        code: error.code || 'SEARCH_ERROR',
+        type: 'NETWORK_ERROR'
+      }
     };
   }
 });
@@ -128,7 +290,7 @@ resolver.define('storePTORequest', async (req) => {
   try {
     console.log('📝 Storing PTO Request:', req.payload);
     
-    const { reporter, manager, startDate, endDate, leaveType, reason, dailySchedules } = req.payload;
+    const { reporter, manager, startDate, endDate, leaveType, reason, dailySchedules } = req.payload || {};
     
     // Validate required fields
     if (!reporter || !manager || !startDate || !endDate || !leaveType || !reason) {
@@ -229,7 +391,7 @@ resolver.define('getPTORequests', async (req) => {
 // Get Pending Requests for Manager
 resolver.define('getPendingRequests', async (req) => {
   try {
-    const { managerEmail } = req.payload;
+    const { managerEmail } = req.payload || {};
     console.log('⏳ Getting pending requests for manager:', managerEmail);
     
     const requests = await storage.get('pto_requests') || [];
@@ -254,7 +416,7 @@ resolver.define('getPendingRequests', async (req) => {
 // Update PTO Request Status (Approve/Decline)
 resolver.define('updatePTORequest', async (req) => {
   try {
-    const { requestId, status, comment } = req.payload;
+    const { requestId, status, comment } = req.payload || {};
     console.log(`✅ Updating PTO request ${requestId} to ${status}`);
     
     const requests = await storage.get('pto_requests') || [];
@@ -293,12 +455,8 @@ resolver.define('updatePTORequest', async (req) => {
 resolver.define('getTeams', async (req) => {
   try {
     console.log('👥 Getting teams');
-    const teams = await storage.get('pto_teams') || [];
-    
-    return {
-      success: true,
-      data: teams
-    };
+    const result = await teamUserService.getTeams();
+    return result;
   } catch (error) {
     console.error('❌ Error getting teams:', error);
     return {
@@ -308,10 +466,10 @@ resolver.define('getTeams', async (req) => {
   }
 });
 
-// Create Team
+// Team Management Resolvers
 resolver.define('createTeam', async (req) => {
   try {
-    const result = await teamUserService.createTeam(req.payload);
+    const result = await teamUserService.createTeam(req.payload || {});
     return result;
   } catch (error) {
     console.error('❌ Error in createTeam resolver:', error);
@@ -324,7 +482,7 @@ resolver.define('createTeam', async (req) => {
 
 resolver.define('updateTeam', async (req) => {
   try {
-    const result = await teamUserService.updateTeam(req.payload);
+    const result = await teamUserService.updateTeam(req.payload || {});
     return result;
   } catch (error) {
     console.error('❌ Error in updateTeam resolver:', error);
@@ -337,7 +495,7 @@ resolver.define('updateTeam', async (req) => {
 
 resolver.define('deleteTeam', async (req) => {
   try {
-    const { teamId, deletedBy } = req.payload;
+    const { teamId, deletedBy } = req.payload || {};
     const result = await teamUserService.deleteTeam(teamId, deletedBy);
     return result;
   } catch (error) {
@@ -349,10 +507,9 @@ resolver.define('deleteTeam', async (req) => {
   }
 });
 
-
 resolver.define('addTeamMember', async (req) => {
   try {
-    const { teamId, member } = req.payload;
+    const { teamId, member } = req.payload || {};
     const result = await teamUserService.addTeamMember(teamId, member);
     return result;
   } catch (error) {
@@ -366,7 +523,7 @@ resolver.define('addTeamMember', async (req) => {
 
 resolver.define('removeTeamMember', async (req) => {
   try {
-    const { teamId, memberAccountId, removedBy } = req.payload;
+    const { teamId, memberAccountId, removedBy } = req.payload || {};
     const result = await teamUserService.removeTeamMember(teamId, memberAccountId, removedBy);
     return result;
   } catch (error) {
@@ -377,6 +534,8 @@ resolver.define('removeTeamMember', async (req) => {
     };
   }
 });
+
+// User Management Resolvers
 resolver.define('getUsers', async (req) => {
   try {
     const result = await teamUserService.getUsers();
@@ -392,7 +551,7 @@ resolver.define('getUsers', async (req) => {
 
 resolver.define('getUserById', async (req) => {
   try {
-    const { userId } = req.payload;
+    const { userId } = req.payload || {};
     const result = await teamUserService.getUserById(userId);
     return result;
   } catch (error) {
@@ -406,7 +565,7 @@ resolver.define('getUserById', async (req) => {
 
 resolver.define('getUsersByTeam', async (req) => {
   try {
-    const { teamId } = req.payload;
+    const { teamId } = req.payload || {};
     const result = await teamUserService.getUsersByTeam(teamId);
     return result;
   } catch (error) {
@@ -417,10 +576,10 @@ resolver.define('getUsersByTeam', async (req) => {
     };
   }
 });
-// User Management Resolvers
+
 resolver.define('createUser', async (req) => {
   try {
-    const result = await teamUserService.createUser(req.payload);
+    const result = await teamUserService.createUser(req.payload || {});
     return result;
   } catch (error) {
     console.error('❌ Error in createUser resolver:', error);
@@ -433,7 +592,7 @@ resolver.define('createUser', async (req) => {
 
 resolver.define('updateUser', async (req) => {
   try {
-    const result = await teamUserService.updateUser(req.payload);
+    const result = await teamUserService.updateUser(req.payload || {});
     return result;
   } catch (error) {
     console.error('❌ Error in updateUser resolver:', error);
@@ -446,7 +605,7 @@ resolver.define('updateUser', async (req) => {
 
 resolver.define('deleteUser', async (req) => {
   try {
-    const { userId, deletedBy } = req.payload;
+    const { userId, deletedBy } = req.payload || {};
     const result = await teamUserService.deleteUser(userId, deletedBy);
     return result;
   } catch (error) {
@@ -458,11 +617,10 @@ resolver.define('deleteUser', async (req) => {
   }
 });
 
-
 // Get Team PTO Requests
 resolver.define('getTeamPTORequests', async (req) => {
   try {
-    const { teamId, dateRange } = req.payload;
+    const { teamId, dateRange } = req.payload || {};
     const result = await teamUserService.getTeamPTORequests(teamId, dateRange);
     return result;
   } catch (error) {
@@ -474,11 +632,10 @@ resolver.define('getTeamPTORequests', async (req) => {
   }
 });
 
-
 // Get PTO Calendar Events
 resolver.define('getPTOCalendarEvents', async (req) => {
   try {
-    const { startDate, endDate } = req.payload;
+    const { startDate, endDate } = req.payload || {};
     console.log('📅 Getting calendar events from', startDate, 'to', endDate);
     
     const requests = await storage.get('pto_requests') || [];
@@ -522,38 +679,10 @@ resolver.define('getPTOCalendarEvents', async (req) => {
   }
 });
 
-// Debug function to check storage
-resolver.define('debugStorage', async (req) => {
-  try {
-    const { table } = req.payload || {};
-    const data = await storage.get(table || 'pto_requests');
-    
-    return {
-      success: true,
-      data: {
-        table: table || 'pto_requests',
-        count: Array.isArray(data) ? data.length : 0,
-        records: data || []
-      }
-    };
-  } catch (error) {
-    console.error('❌ Debug storage error:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-
-
-// Add these functions to your existing index.js resolver
-
 // Admin Management Functions
-
-// Check if user has admin status
 resolver.define('checkUserAdminStatus', async (req) => {
   try {
-    const { accountId } = req.payload;
+    const { accountId } = req.payload || {};
     console.log('🔍 Checking admin status for:', accountId);
     
     const admins = await storage.get('pto_admins') || [];
@@ -572,10 +701,9 @@ resolver.define('checkUserAdminStatus', async (req) => {
   }
 });
 
-// Add admin user
 resolver.define('addAdminUser', async (req) => {
   try {
-    const { accountId, addedBy } = req.payload;
+    const { accountId, addedBy } = req.payload || {};
     console.log('👑 Adding admin user:', accountId);
     
     const admins = await storage.get('pto_admins') || [];
@@ -608,10 +736,9 @@ resolver.define('addAdminUser', async (req) => {
   }
 });
 
-// Remove admin user
 resolver.define('removeAdminUser', async (req) => {
   try {
-    const { accountId, removedBy } = req.payload;
+    const { accountId, removedBy } = req.payload || {};
     console.log('👑 Removing admin user:', accountId);
     
     const admins = await storage.get('pto_admins') || [];
@@ -642,22 +769,12 @@ resolver.define('removeAdminUser', async (req) => {
   }
 });
 
-// Get all admin users
 resolver.define('getAdminUsers', async (req) => {
   try {
     console.log('👑 Getting admin users');
     const adminIds = await storage.get('pto_admins') || [];
     
-    // Get user details for each admin
-    const adminUsers = [];
-    for (const adminId of adminIds) {
-      try {
-        // You might want to cache user details or get them from Jira
-        adminUsers.push({ accountId: adminId });
-      } catch (error) {
-        console.warn('Could not fetch details for admin:', adminId);
-      }
-    }
+    const adminUsers = adminIds.map(adminId => ({ accountId: adminId }));
     
     return {
       success: true,
@@ -672,15 +789,13 @@ resolver.define('getAdminUsers', async (req) => {
   }
 });
 
-// Admin PTO Functions
-
 // Submit PTO request on behalf of another user (Admin only)
 resolver.define('submitPTOForUser', async (req) => {
   try {
-    const { requestData, submittedBy } = req.payload;
-    console.log('👑 Admin submitting PTO for user:', requestData.requester_id);
+    const { requestData, submittedBy } = req.payload || {};
+    console.log('👑 Admin submitting PTO for user:', requestData?.requester_id);
     
-    // Verify admin status (inline instead of using invoke)
+    // Verify admin status
     const admins = await storage.get('pto_admins') || [];
     if (!admins.includes(submittedBy)) {
       throw new Error('Unauthorized: Admin privileges required');
@@ -700,7 +815,7 @@ resolver.define('submitPTOForUser', async (req) => {
       end_date: requestData.end_date,
       leave_type: requestData.leave_type,
       reason: requestData.reason,
-      status: requestData.status || 'approved', // Admin can directly approve
+      status: requestData.status || 'approved',
       total_days: requestData.total_days,
       total_hours: requestData.total_hours,
       submitted_at: new Date().toISOString(),
@@ -726,12 +841,11 @@ resolver.define('submitPTOForUser', async (req) => {
     };
   }
 });
-// Enhanced Team Functions
 
 // Get user's teams
 resolver.define('getUserTeams', async (req) => {
   try {
-    const { userId } = req.payload;
+    const { userId } = req.payload || {};
     const result = await teamUserService.getUserTeams(userId);
     return result;
   } catch (error) {
@@ -743,13 +857,10 @@ resolver.define('getUserTeams', async (req) => {
   }
 });
 
-
-
-
 // Get team analytics
 resolver.define('getTeamAnalytics', async (req) => {
   try {
-    const { teamId, dateRange } = req.payload;
+    const { teamId, dateRange } = req.payload || {};
     const result = await teamUserService.getTeamAnalytics(teamId, dateRange);
     return result;
   } catch (error) {
@@ -761,21 +872,14 @@ resolver.define('getTeamAnalytics', async (req) => {
   }
 });
 
-
-// Replace the previous admin setup functions with these fixed versions
-
 // Auto-setup admin users on first run
 resolver.define('setupDefaultAdmin', async (req) => {
   try {
     console.log('🔧 Setting up default admin users...');
     
-    // Get current admins
     const admins = await storage.get('pto_admins') || [];
-    
-    // Default admin email - you can change this
     const defaultAdminEmail = 'gabriela.carrion@rebelmouse.com';
     
-    // Search for the user by email to get their account ID
     const userSearchResponse = await api.asUser().requestJira(
       route`/rest/api/3/user/search?query=${defaultAdminEmail}&maxResults=1`
     );
@@ -785,7 +889,6 @@ resolver.define('setupDefaultAdmin', async (req) => {
       if (users.length > 0) {
         const adminAccountId = users[0].accountId;
         
-        // Add to admins if not already there
         if (!admins.includes(adminAccountId)) {
           admins.push(adminAccountId);
           await storage.set('pto_admins', admins);
@@ -822,12 +925,11 @@ resolver.define('setupDefaultAdmin', async (req) => {
   }
 });
 
-// Auto-initialize admin on database init - FIXED VERSION
+// Auto-initialize admin on database init
 resolver.define('initializePTODatabaseWithAdmin', async (req) => {
   try {
     console.log('🔧 Initializing PTO Database with Admin Setup...');
     
-    // First initialize the regular database (inline the logic instead of using invoke)
     const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances', 'pto_admins'];
     
     for (const table of tables) {
@@ -838,7 +940,6 @@ resolver.define('initializePTODatabaseWithAdmin', async (req) => {
       }
     }
     
-    // Then set up default admin (inline the logic)
     const admins = await storage.get('pto_admins') || [];
     const defaultAdminEmail = 'gabriela.carrion@rebelmouse.com';
     
@@ -848,7 +949,6 @@ resolver.define('initializePTODatabaseWithAdmin', async (req) => {
     };
     
     try {
-      // Search for the user by email to get their account ID
       const userSearchResponse = await api.asUser().requestJira(
         route`/rest/api/3/user/search?query=${defaultAdminEmail}&maxResults=1`
       );
@@ -858,7 +958,6 @@ resolver.define('initializePTODatabaseWithAdmin', async (req) => {
         if (users.length > 0) {
           const adminAccountId = users[0].accountId;
           
-          // Add to admins if not already there
           if (!admins.includes(adminAccountId)) {
             admins.push(adminAccountId);
             await storage.set('pto_admins', admins);
@@ -907,7 +1006,6 @@ resolver.define('initializePTODatabaseWithAdmin', async (req) => {
   } catch (error) {
     console.error('❌ Database and admin initialization failed:', error);
     
-    // Try to at least initialize the basic database
     try {
       const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances', 'pto_admins'];
       for (const table of tables) {
@@ -934,6 +1032,83 @@ resolver.define('initializePTODatabaseWithAdmin', async (req) => {
   }
 });
 
+resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
+  try {
+    console.log('🔧 Initializing PTO Database with Enhanced Team Management...');
+    
+    // Initialize the original PTO database first
+    const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances', 'pto_admins'];
+    
+    for (const table of tables) {
+      const existing = await storage.get(table);
+      if (!existing) {
+        await storage.set(table, []);
+        console.log(`✅ Initialized table: ${table}`);
+      }
+    }
+    
+    // Initialize the enhanced team/user service
+    await teamUserService.initialize();
+    
+    // Set up default admin
+    let adminResult = null;
+    try {
+      const admins = await storage.get('pto_admins') || [];
+      const defaultAdminEmail = 'gabriela.carrion@rebelmouse.com';
+      
+      const userSearchResponse = await api.asUser().requestJira(
+        route`/rest/api/3/user/search?query=${defaultAdminEmail}&maxResults=1`
+      );
+      
+      if (userSearchResponse.ok) {
+        const users = await userSearchResponse.json();
+        if (users.length > 0) {
+          const adminAccountId = users[0].accountId;
+          
+          if (!admins.includes(adminAccountId)) {
+            admins.push(adminAccountId);
+            await storage.set('pto_admins', admins);
+            
+            adminResult = {
+              success: true,
+              message: `Default admin ${defaultAdminEmail} added successfully`
+            };
+          } else {
+            adminResult = {
+              success: true,
+              message: `${defaultAdminEmail} is already an admin`
+            };
+          }
+        }
+      }
+    } catch (adminError) {
+      console.warn('Could not set up default admin:', adminError);
+      adminResult = {
+        success: false,
+        message: adminError.message
+      };
+    }
+    
+    return {
+      success: true,
+      data: {
+        pto: { success: true, message: 'PTO tables initialized' },
+        teamUser: { success: true, message: 'Team/User service initialized' },
+        admin: adminResult,
+        initialized: true,
+        timestamp: new Date().toISOString()
+      },
+      message: 'PTO Database with Enhanced Team Management initialized successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error initializing PTO Database with Team Management:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to initialize database'
+    };
+  }
+});
+
 // Clear storage (for development/testing)
 resolver.define('clearStorage', async (req) => {
   try {
@@ -943,7 +1118,6 @@ resolver.define('clearStorage', async (req) => {
       await storage.set(table, []);
       console.log(`🗑️ Cleared storage table: ${table}`);
     } else {
-      // Clear all PTO tables
       const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances'];
       for (const tableName of tables) {
         await storage.set(tableName, []);
@@ -964,8 +1138,30 @@ resolver.define('clearStorage', async (req) => {
   }
 });
 
+// Debug function to check storage
+resolver.define('debugStorage', async (req) => {
+  try {
+    const { table } = req.payload || {};
+    const data = await storage.get(table || 'pto_requests');
+    
+    return {
+      success: true,
+      data: {
+        table: table || 'pto_requests',
+        count: Array.isArray(data) ? data.length : 0,
+        records: data || []
+      }
+    };
+  } catch (error) {
+    console.error('❌ Debug storage error:', error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
 
-// Debug and Maintenance Resolvers
+// Debug and Maintenance Resolvers for Team User Service
 resolver.define('debugTeamUserStorage', async (req) => {
   try {
     const { table } = req.payload || {};
@@ -1006,48 +1202,5 @@ resolver.define('migrateFromPTOTeams', async (req) => {
     };
   }
 });
-
-resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
-  try {
-    console.log('🔧 Initializing PTO Database with Enhanced Team Management...');
-    
-    // Initialize the original PTO database
-    const ptoResult = await invoke('initializePTODatabase');
-    
-    // Initialize the enhanced team/user service
-    const teamUserResult = await invoke('initializeTeamUserService');
-    
-    // Set up default admin if current user provided
-    let adminResult = null;
-    if (req.context?.accountId) {
-      try {
-        adminResult = await invoke('setupDefaultAdmin', {
-          accountId: req.context.accountId
-        });
-      } catch (adminError) {
-        console.warn('Could not set up default admin:', adminError);
-      }
-    }
-    
-    return {
-      success: true,
-      data: {
-        pto: ptoResult,
-        teamUser: teamUserResult,
-        admin: adminResult,
-        initialized: true,
-        timestamp: new Date().toISOString()
-      },
-      message: 'PTO Database with Enhanced Team Management initialized successfully'
-    };
-  } catch (error) {
-    console.error('❌ Error initializing PTO Database with Team Management:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to initialize database'
-    };
-  }
-});
-
 
 export const handler = resolver.getDefinitions();
