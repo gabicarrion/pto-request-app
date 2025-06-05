@@ -1,0 +1,58 @@
+modules:
+  jira:globalPage:
+    - key: pto-request-page
+      resource: main
+      resolver:
+        function: resolver
+      title: PTO Request
+      description: PTO Request Management System
+
+  function:
+    - key: resolver
+      handler: index.handler
+
+resources:
+  - key: main
+    path: static/
+
+permissions:
+  content:
+    scripts:
+      - unsafe-inline
+      - unsafe-eval
+    styles:
+      - unsafe-inline
+  scopes:
+    - read:project:jira
+    - read:project-category:jira
+    - read:project-role:jira
+    - read:project-version:jira
+    - read:issue:jira
+    - read:issue-type:jira
+    - read:issue-meta:jira
+    - read:application-role:jira
+    - read:avatar:jira
+    - read:field:jira
+    - read:jira-work
+    - read:jira-user
+    - storage:app
+    - write:jira-work
+    - manage:jira-project
+    - read:filter:jira
+    - manage:jira-configuration
+
+  external:
+    fetch:
+      backend:
+        - "*.atlassian.net"
+        - "*.atlassian-dev.net"
+    styles: []
+    scripts:
+      - forge.cdn.prod.atlassian.com
+      - connect-cdn.atl-paas.net
+      - forge.cdn.prod.atlassian-dev.net
+
+app:
+  runtime:
+    name: nodejs20.x
+  id: ari:cloud:ecosystem::app/330639ba-5663-4062-949e-1c8dc331f49b
