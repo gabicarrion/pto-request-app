@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
+import UserPicker from './UserPicker';
 
 function TeamManagementModal({ 
   isOpen, 
@@ -23,7 +24,7 @@ function TeamManagementModal({
   const [teamFormData, setTeamFormData] = useState({
     name: '',
     description: '',
-    teamLead: '',
+    teamLead: null, // Changed to store user object
     department: '',
     color: '#667eea'
   });
@@ -52,12 +53,22 @@ function TeamManagementModal({
 
   const [errors, setErrors] = useState({});
 
+  // Department options - updated list
+  const departmentOptions = [
+    'Product',
+    'Devops', 
+    'RebelCare',
+    'Strategy',
+    'Service Delivery',
+    'Client Services'
+  ];
+
   // Reset forms
   const resetTeamForm = () => {
     setTeamFormData({
       name: '',
       description: '',
-      teamLead: '',
+      teamLead: null, // Reset to null
       department: '',
       color: '#667eea'
     });
@@ -110,10 +121,28 @@ function TeamManagementModal({
   // Team handlers
   const handleEditTeam = (team) => {
     setEditingTeam(team);
+    
+    // Handle team lead - convert string to user object if needed
+    let teamLead = null;
+    if (team.team_lead) {
+      // Try to find the user object for the team lead
+      if (typeof team.team_lead === 'string') {
+        // If it's a string, try to find the user by display name
+        teamLead = users.find(user => 
+          user.display_name === team.team_lead || 
+          user.displayName === team.team_lead ||
+          user.name === team.team_lead
+        ) || null;
+      } else if (typeof team.team_lead === 'object') {
+        // If it's already an object, use it
+        teamLead = team.team_lead;
+      }
+    }
+
     setTeamFormData({
       name: team.name || '',
       description: team.description || '',
-      teamLead: team.team_lead || team.manager?.displayName || '',
+      teamLead: teamLead,
       department: team.department || '',
       color: team.color || '#667eea'
     });
@@ -124,6 +153,13 @@ function TeamManagementModal({
     setTeamFormData(prev => ({ ...prev, [field]: value }));
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: null }));
+    }
+  };
+
+  const handleTeamLeadChange = (user) => {
+    setTeamFormData(prev => ({ ...prev, teamLead: user }));
+    if (errors.teamLead) {
+      setErrors(prev => ({ ...prev, teamLead: null }));
     }
   };
 
@@ -146,10 +182,11 @@ function TeamManagementModal({
         id: editingTeam?.id,
         name: teamFormData.name,
         description: teamFormData.description,
-        team_lead: teamFormData.teamLead,
+        team_lead: teamFormData.teamLead?.displayName || teamFormData.teamLead?.display_name || '',
+        teamLeadUser: teamFormData.teamLead, // Store the full user object
         department: teamFormData.department,
         color: teamFormData.color,
-        manager: editingTeam?.manager || null,
+        manager: editingTeam?.manager || teamFormData.teamLead || null,
         members: editingTeam?.members || []
       };
       
@@ -500,15 +537,14 @@ function TeamManagementModal({
                   <div className="form-row">
                     <div className="form-group">
                       <label htmlFor="team-lead">Team Lead</label>
-                      <input
-                        type="text"
-                        id="team-lead"
-                        className="form-control"
-                        value={teamFormData.teamLead}
-                        onChange={(e) => handleTeamInputChange('teamLead', e.target.value)}
-                        placeholder="Team lead name"
+                      <UserPicker
+                        selectedUser={teamFormData.teamLead}
+                        onSelect={handleTeamLeadChange}
+                        placeholder="Search and select team lead"
                         disabled={loading}
+                        error={errors.teamLead}
                       />
+                      {errors.teamLead && <span className="error-text">{errors.teamLead}</span>}
                     </div>
 
                     <div className="form-group">
@@ -521,16 +557,9 @@ function TeamManagementModal({
                         disabled={loading}
                       >
                         <option value="">Select Department</option>
-                        <option value="Engineering">Engineering</option>
-                        <option value="Product">Product</option>
-                        <option value="Design">Design</option>
-                        <option value="Marketing">Marketing</option>
-                        <option value="Sales">Sales</option>
-                        <option value="HR">Human Resources</option>
-                        <option value="Finance">Finance</option>
-                        <option value="Operations">Operations</option>
-                        <option value="Customer Success">Customer Success</option>
-                        <option value="QA">Quality Assurance</option>
+                        {departmentOptions.map(dept => (
+                          <option key={dept} value={dept}>{dept}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
