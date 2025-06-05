@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Calendar, Clock, Users, CheckCircle, User, Shield } from 'lucide-react';
 import { invoke } from '@forge/bridge';
 
@@ -6,7 +6,7 @@ import { invoke } from '@forge/bridge';
 import Notification from './components/Notifications';
 import AdminManagement from './views/AdminManagement';
 import TeamPage from './views/TeamPage';
-import NetworkErrorHandler from './components/NetworkErrorHandler';
+
 // Pages & Hooks
 import CalendarPage from './views/CalendarPage';
 import RequestsPage from './views/RequestsPage';
@@ -22,24 +22,10 @@ const PTOManagementApp = () => {
   const [notification, setNotification] = useState(null);
   const [appLoading, setAppLoading] = useState(true);
   const [userTeams, setUserTeams] = useState([]);
-  
-  // Calendar filter state for admin deep-linking
-  const [calendarFilters, setCalendarFilters] = useState({
-    teamId: null,
-    userId: null
-  });
+  const [initializationError, setInitializationError] = useState(null);
 
- // Custom hooks
-  const { 
-    currentUser, 
-    loading: userLoading, 
-    error: userError, 
-    isAdmin,
-    refreshUser,
-    testConnectivity,
-    retryCount
-  } = useCurrentUser();
-  
+  // Custom hooks
+  const { currentUser, loading: userLoading, error: userError, isAdmin } = useCurrentUser();
   const { 
     requests: ptoRequests, 
     loading: requestsLoading, 
@@ -64,60 +50,70 @@ const PTOManagementApp = () => {
         }
       } catch (error) {
         console.error('Error loading user teams:', error);
-        // Don't show notification for team loading errors, it's not critical
       }
     };
 
     loadUserTeams();
   }, [currentUser]);
 
-  // Initialize app with admin setup
+  // Initialize app - FIXED VERSION
   useEffect(() => {
     const initializeApp = async () => {
       setAppLoading(true);
+      setInitializationError(null);
+      
       try {
-        console.log('🔧 Initializing PTO App with Admin Setup...');
+        console.log('🔧 Initializing PTO App...');
         
-        // Test connectivity first
-        const connectivityTest = await testConnectivity();
-        if (!connectivityTest.success) {
-          console.warn('⚠️ Connectivity test failed, but continuing with initialization...');
-        }
-        
-        // Initialize database and set up default admin
-        const dbResult = await invoke('initializePTODatabaseWithTeamManagement');
+        // Step 1: Initialize basic PTO database
+        const dbResult = await invoke('initializePTODatabase');
         if (!dbResult.success) {
-          console.warn('Admin setup failed, trying regular init:', dbResult.message);
-          // Fallback to regular initialization
-          const fallbackResult = await invoke('initializePTODatabase');
-          if (!fallbackResult.success) {
-            throw new Error(fallbackResult.message);
+          throw new Error(dbResult.message || 'Failed to initialize database');
+        }
+        console.log('✅ Basic PTO database initialized');
+
+        // Step 2: Initialize team user service
+        try {
+          const teamResult = await invoke('initializeTeamUserService');
+          if (teamResult.success) {
+            console.log('✅ Team user service initialized');
+          } else {
+            console.warn('⚠️ Team service initialization failed:', teamResult.message);
           }
-        } else {
-          console.log('✅ PTO App and Admin initialized:', dbResult.data);
+        } catch (teamError) {
+          console.warn('⚠️ Team service not available:', teamError.message);
+        }
+
+        // Step 3: Set up default admin (if current user is available)
+        if (currentUser?.accountId) {
+          try {
+            const adminResult = await invoke('setupDefaultAdmin');
+            if (adminResult.success) {
+              console.log('✅ Admin setup completed');
+            } else {
+              console.warn('⚠️ Admin setup failed:', adminResult.message);
+            }
+          } catch (adminError) {
+            console.warn('⚠️ Admin setup not available:', adminError.message);
+          }
         }
         
         console.log('✅ PTO App initialization complete');
         
       } catch (error) {
         console.error('❌ App initialization failed:', error);
-        
-        // Only show notification for non-network errors
-        if (!error.message.includes('timeout') && !error.message.includes('fetch failed')) {
-          showNotification('Failed to initialize app: ' + error.message, 'error');
-        }
+        setInitializationError(error.message);
+        showNotification('Failed to initialize app: ' + error.message, 'error');
       } finally {
         setAppLoading(false);
       }
     };
 
-    // Only initialize if we have a user or if there's no user error
-    if (currentUser || !userError) {
+    // Only initialize once when the app starts
+    if (appLoading) {
       initializeApp();
-    } else {
-      setAppLoading(false);
     }
-  }, [currentUser, userError, testConnectivity]);
+  }, []); // Remove currentUser dependency to avoid loops
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -135,10 +131,11 @@ const PTOManagementApp = () => {
 
   const handlePTOSubmit = async (ptoData) => {
     try {
+      // Prepare request data in the format expected by your backend
       const requestData = {
         reporter: currentUser,
         manager: ptoData.manager || {
-          accountId: "manager-default",
+          accountId: "manager-default", // You might want to implement manager selection
           displayName: "Manager",
           emailAddress: "manager@company.com"
         },
@@ -181,6 +178,7 @@ const PTOManagementApp = () => {
   };
 
   const handleEditRequest = (request) => {
+    // Implementation for editing requests
     showNotification('Edit functionality will be implemented soon!');
   };
 
@@ -204,84 +202,7 @@ const PTOManagementApp = () => {
     }
   };
 
-  // Show network error handler if user loading failed
-  if (userError) {
-    return (
-      <NetworkErrorHandler
-        error={userError}
-        onRetry={refreshUser}
-        onTestConnectivity={testConnectivity}
-        loading={userLoading}
-        retryCount={retryCount}
-      />
-    );
-  }
-
-  // Show loading state during initialization
-  if (appLoading || userLoading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">
-            {userLoading ? 'Loading user information...' : 'Initializing PTO Management'}
-          </h2>
-          <p className="text-gray-600">
-            {userLoading ? 'Connecting to Jira...' : 'Setting up database and admin users...'}
-          </p>
-          {retryCount > 0 && (
-            <p className="text-sm text-yellow-600 mt-2">
-              Retry attempt {retryCount}/3
-            </p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-    // Don't render if no current user
-  if (!currentUser) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading user information...</p>
-          <button 
-            onClick={refreshUser}
-            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-  // Handle navigation from admin with filters
-  const handleNavigateToCalendar = (tab, filters = {}) => {
-    console.log('📅 Navigating to calendar with filters:', filters);
-    
-    setCalendarFilters({
-      teamId: filters.teamId || null,
-      userId: filters.userId || null
-    });
-    
-    setActiveTab(tab);
-    
-    if (filters.teamId || filters.userId) {
-      const filterText = filters.teamId ? 'team filter' : 'user filter';
-      showNotification(`Calendar opened with ${filterText} applied`, 'success');
-    }
-  };
-
-  // Clear calendar filters when tab changes
-  const handleTabChange = (newTab) => {
-    if (newTab !== 'calendar') {
-      setCalendarFilters({ teamId: null, userId: null });
-    }
-    setActiveTab(newTab);
-  };
-
-  // Navigation tabs configuration
+  // Navigation tabs configuration - now includes admin tab
   const tabs = [
     { 
       id: 'calendar', 
@@ -307,6 +228,7 @@ const PTOManagementApp = () => {
       icon: Users,
       description: 'Team dashboard and analytics'
     },
+    // Admin tab - only show for admin users
     ...(isAdmin ? [{ 
       id: 'admin', 
       label: 'Admin', 
@@ -315,24 +237,31 @@ const PTOManagementApp = () => {
     }] : [])
   ];
 
-  // Get filtered data based on user
+  // Filter data based on user
   const userRequests = getUserRequests(currentUser?.accountId);
-  
-  // Get pending requests for current user as manager (requests where they are the manager)
-  const pendingRequestsForApproval = ptoRequests.filter(req => 
-    req.status === 'pending' && 
-    req.manager_email === currentUser?.emailAddress &&
+  const pendingRequests = getPendingRequests().filter(req => 
     req.requester_id !== currentUser?.accountId
   );
 
   // Show loading state during initialization
   if (appLoading || userLoading) {
     return (
-      <div className="pto-app-loading">
-        <div className="loading-content">
-          <div className="loading-spinner"></div>
-          <h2 className="loading-title">Initializing PTO Management</h2>
-          <p className="loading-text">Setting up database and admin users...</p>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Initializing PTO Management</h2>
+          <p className="text-gray-600">Setting up database and user services...</p>
+          {initializationError && (
+            <div className="mt-4 p-3 bg-red-100 border border-red-300 rounded-md">
+              <p className="text-red-700 text-sm">Error: {initializationError}</p>
+              <button 
+                onClick={() => window.location.reload()} 
+                className="mt-2 px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600"
+              >
+                Retry
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -341,14 +270,18 @@ const PTOManagementApp = () => {
   // Show error state if user loading failed
   if (userError) {
     return (
-      <div className="pto-app-error">
-        <div className="error-content">
-          <div className="error-icon">⚠️</div>
-          <h2 className="error-title">Authentication Error</h2>
-          <p className="error-text">Failed to load user information: {userError}</p>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center p-8 bg-white rounded-lg shadow-md">
+          <div className="text-red-500 mb-4">
+            <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.268 18.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Authentication Error</h2>
+          <p className="text-gray-600 mb-4">Failed to load user information: {userError}</p>
           <button 
             onClick={() => window.location.reload()} 
-            className="btn btn-primary error-retry-btn"
+            className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
           >
             Retry
           </button>
@@ -360,65 +293,65 @@ const PTOManagementApp = () => {
   // Don't render if no current user
   if (!currentUser) {
     return (
-      <div className="pto-app-loading">
-        <div className="loading-content">
-          <div className="loading-spinner"></div>
-          <p className="loading-text">Loading user information...</p>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading user information...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="pto-app">
+    <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="pto-app-header">
-        <div className="header-container">
-          <div className="header-content">
-            <div className="header-brand">
-              <div className="brand-icon">
-                <Calendar size={20} />
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
+                <Calendar size={20} className="text-white" />
               </div>
-              <div className="brand-text">
-                <h1 className="brand-title">PTO Management</h1>
+              <div>
+                <h1 className="text-xl font-semibold text-gray-900">PTO Management</h1>
               </div>
             </div>
             
-            <div className="header-user-section">
+            <div className="flex items-center space-x-4">
               {/* Quick Stats */}
-              <div className="header-stats">
-                <div className="stat-item">
-                  <div className="stat-dot stat-pending"></div>
-                  <span className="stat-text">{pendingRequestsForApproval.length} pending</span>
+              <div className="hidden md:flex items-center space-x-4 text-sm text-gray-600">
+                <div className="flex items-center space-x-1">
+                  <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
+                  <span>{pendingRequests.length} pending</span>
                 </div>
-                <div className="stat-item">
-                  <div className="stat-dot stat-approved"></div>
-                  <span className="stat-text">{userRequests.filter(r => r.status === 'approved').length} approved</span>
+                <div className="flex items-center space-x-1">
+                  <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                  <span>{userRequests.filter(r => r.status === 'approved').length} approved</span>
                 </div>
                 {userTeams.length > 0 && (
-                  <div className="stat-item">
-                    <div className="stat-dot stat-team"></div>
-                    <span className="stat-text">{userTeams.length} teams</span>
+                  <div className="flex items-center space-x-1">
+                    <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                    <span>{userTeams.length} teams</span>
                   </div>
                 )}
               </div>
               
               {/* User Profile */}
-              <div className="header-user-profile">
-                <div className="user-avatar">
+              <div className="flex items-center space-x-2">
+                <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white text-sm font-semibold relative">
                   {currentUser.displayName?.charAt(0) || <User size={16} />}
                   {isAdmin && (
-                    <div className="admin-badge">
-                      <Shield size={8} />
+                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-purple-500 rounded-full flex items-center justify-center">
+                      <Shield size={8} className="text-white" />
                     </div>
                   )}
                 </div>
-                <div className="user-info">
-                  <div className="user-name">
+                <div className="hidden sm:block">
+                  <div className="text-sm font-medium text-gray-700 flex items-center space-x-1">
                     <span>{currentUser.displayName}</span>
-                    {isAdmin && <Shield size={12} className="admin-icon" />}
+                    {isAdmin && <Shield size={12} className="text-purple-600" />}
                   </div>
-                  <div className="user-email">{currentUser.emailAddress}</div>
+                  <div className="text-xs text-gray-500">{currentUser.emailAddress}</div>
                 </div>
               </div>
             </div>
@@ -427,9 +360,9 @@ const PTOManagementApp = () => {
       </header>
 
       {/* Navigation */}
-      <nav className="pto-app-nav">
-        <div className="nav-container">
-          <div className="nav-tabs">
+      <nav className="bg-white border-b">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex space-x-8">
             {tabs.map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -437,17 +370,27 @@ const PTOManagementApp = () => {
               return (
                 <button
                   key={tab.id}
-                  onClick={() => handleTabChange(tab.id)}
-                  className={`nav-tab ${isActive ? 'nav-tab-active' : ''} ${tab.id === 'admin' ? 'nav-tab-admin' : ''}`}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                    isActive
+                      ? tab.id === 'admin' 
+                        ? 'border-purple-500 text-purple-600'
+                        : 'border-blue-500 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
                   title={tab.description}
                 >
                   <Icon size={16} />
-                  <span className="nav-tab-label">{tab.label}</span>
-                  {tab.id === 'approvals' && pendingRequestsForApproval.length > 0 && (
-                    <span className="nav-tab-badge">{pendingRequestsForApproval.length}</span>
+                  <span>{tab.label}</span>
+                  {tab.id === 'approvals' && pendingRequests.length > 0 && (
+                    <span className="bg-red-500 text-white text-xs rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                      {pendingRequests.length}
+                    </span>
                   )}
                   {tab.id === 'admin' && (
-                    <span className="nav-tab-admin-badge">Admin</span>
+                    <span className="bg-purple-100 text-purple-600 text-xs rounded-full px-2 py-0.5">
+                      Admin
+                    </span>
                   )}
                 </button>
               );
@@ -457,60 +400,54 @@ const PTOManagementApp = () => {
       </nav>
 
       {/* Main Content */}
-      <main className="pto-app-main">
-        <div className="main-container">
-          {activeTab === 'calendar' && (
-            <CalendarPage
-              events={ptoRequests}
-              onDateSelect={handleDateSelect}
-              selectedDates={selectedDates}
-              onSubmitPTO={handlePTOSubmit}
-              currentUser={currentUser}
-              preselectedTeamId={calendarFilters.teamId}
-              preselectedUserId={calendarFilters.userId}
-            />
-          )}
-          
-          {activeTab === 'requests' && (
-            <RequestsPage
-              requests={userRequests}
-              currentUser={currentUser}
-              onEditRequest={handleEditRequest}
-              onCancelRequest={handleCancelRequest}
-            />
-          )}
-          
-          {activeTab === 'approvals' && (
-            <ApprovalsPage
-              pendingRequests={pendingRequestsForApproval}
-              onApproval={handleApproval}
-            />
-          )}
-          
-          {activeTab === 'team' && (
-            <TeamPage
-              teamData={{ teams: userTeams }}
-              requests={ptoRequests}
-              currentUser={currentUser}
-            />
-          )}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {activeTab === 'calendar' && (
+          <CalendarPage
+            events={ptoRequests}
+            onDateSelect={handleDateSelect}
+            selectedDates={selectedDates}
+            onSubmitPTO={handlePTOSubmit}
+          />
+        )}
+        
+        {activeTab === 'requests' && (
+          <RequestsPage
+            requests={userRequests}
+            currentUser={currentUser}
+            onEditRequest={handleEditRequest}
+            onCancelRequest={handleCancelRequest}
+          />
+        )}
+        
+        {activeTab === 'approvals' && (
+          <ApprovalsPage
+            pendingRequests={pendingRequests}
+            onApproval={handleApproval}
+          />
+        )}
+        
+        {activeTab === 'team' && (
+          <TeamPage
+            teamData={{ teams: userTeams }}
+            requests={ptoRequests}
+            currentUser={currentUser}
+          />
+        )}
 
-          {activeTab === 'admin' && isAdmin && (
-            <AdminManagement
-              currentUser={currentUser}
-              showNotification={showNotification}
-              onNavigateToCalendar={handleNavigateToCalendar}
-            />
-          )}
-        </div>
+        {activeTab === 'admin' && isAdmin && (
+          <AdminManagement
+            currentUser={currentUser}
+            showNotification={showNotification}
+          />
+        )}
       </main>
 
       {/* Loading Overlay */}
-      {(requestsLoading || appLoading) && (
-        <div className="pto-loading-overlay">
-          <div className="loading-modal">
-            <div className="loading-spinner"></div>
-            <span className="loading-modal-text">Processing...</span>
+      {(requestsLoading) && (
+        <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 flex items-center space-x-3">
+            <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-gray-700">Processing...</span>
           </div>
         </div>
       )}
