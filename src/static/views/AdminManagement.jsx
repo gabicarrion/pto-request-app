@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Shield, Users, Calendar, Building2, UserCheck, X
+  Shield, Users, Calendar, Building2, UserCheck, X, Eye, CalendarCheck
 } from 'lucide-react';
 import { invoke } from '@forge/bridge';
 import UserPicker from '../components/UserPicker';
 import PTOSubmissionModal from '../components/PTOSubmissionModal';
 import TeamManagementModal from '../components/TeamManagementModal';
 
-const AdminManagement = ({ currentUser, showNotification }) => {
+const AdminManagement = ({ 
+  currentUser, 
+  showNotification, 
+  onNavigateToCalendar // New prop for navigation
+}) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(false);
   const [adminUsers, setAdminUsers] = useState([]);
@@ -129,6 +133,49 @@ const AdminManagement = ({ currentUser, showNotification }) => {
     }
   };
 
+  // Navigate to calendar with team filter
+  const handleViewTeamCalendar = (teamId) => {
+    if (onNavigateToCalendar) {
+      onNavigateToCalendar('calendar', { teamId });
+    }
+  };
+
+  // Navigate to calendar with user filter
+  const handleViewUserCalendar = (userId) => {
+    if (onNavigateToCalendar) {
+      onNavigateToCalendar('calendar', { userId });
+    }
+  };
+
+  // Get team statistics
+  const getTeamStats = (teamId) => {
+    const teamMembers = allUsers.filter(user => user.team_id === teamId);
+    const teamMemberIds = teamMembers.map(user => user.jira_account_id || user.id);
+    const teamRequests = allRequests.filter(req => teamMemberIds.includes(req.requester_id));
+    
+    return {
+      memberCount: teamMembers.length,
+      totalRequests: teamRequests.length,
+      pendingRequests: teamRequests.filter(req => req.status === 'pending').length,
+      approvedRequests: teamRequests.filter(req => req.status === 'approved').length,
+      totalDaysOff: teamRequests
+        .filter(req => req.status === 'approved')
+        .reduce((sum, req) => sum + (req.total_days || 0), 0)
+    };
+  };
+
+  // Get current PTO status for user
+  const getUserCurrentPTO = (userId) => {
+    const today = new Date();
+    const userRequests = allRequests.filter(req => 
+      (req.requester_id === userId) && 
+      req.status === 'approved' &&
+      new Date(req.start_date) <= today &&
+      new Date(req.end_date) >= today
+    );
+    return userRequests.length > 0 ? userRequests[0] : null;
+  };
+
   const stats = {
     totalAdmins: adminUsers.length,
     totalTeams: allTeams.length,
@@ -142,10 +189,33 @@ const AdminManagement = ({ currentUser, showNotification }) => {
     <div className="dashboard">
       {/* Tabs */}
       <div className="main-tabs">
-        <button className={`tab-btn${activeTab === 'overview' ? ' active' : ''}`} onClick={() => setActiveTab('overview')}>Overview</button>
-        <button className={`tab-btn${activeTab === 'analytics' ? ' active' : ''}`} onClick={() => setActiveTab('analytics')}>Analytics</button>
+        <button 
+          className={`tab-btn${activeTab === 'overview' ? ' active' : ''}`} 
+          onClick={() => setActiveTab('overview')}
+        >
+          📊 Overview
+        </button>
+        <button 
+          className={`tab-btn${activeTab === 'teams' ? ' active' : ''}`} 
+          onClick={() => setActiveTab('teams')}
+        >
+          👥 Teams
+        </button>
+        <button 
+          className={`tab-btn${activeTab === 'users' ? ' active' : ''}`} 
+          onClick={() => setActiveTab('users')}
+        >
+          👤 Users
+        </button>
+        <button 
+          className={`tab-btn${activeTab === 'analytics' ? ' active' : ''}`} 
+          onClick={() => setActiveTab('analytics')}
+        >
+          📈 Analytics
+        </button>
       </div>
-      {/* Overview */}
+
+      {/* Overview Tab */}
       {activeTab === 'overview' && (
         <div className="dashboard-section">
           <div className="dashboard-cards">
@@ -156,6 +226,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
             <SummaryCard title="Pending" value={stats.pendingRequests} color="yellow" icon={<Calendar size={24} />} />
             <SummaryCard title="Approved" value={stats.approvedRequests} color="green" icon={<Calendar size={24} />} />
           </div>
+
           {/* Quick Actions */}
           <div className="card">
             <div className="card-header">Quick Actions</div>
@@ -181,13 +252,21 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                   <div className="action-desc">Create PTO for users</div>
                 </div>
               </button>
+              <button onClick={() => handleViewTeamCalendar()} className="action-btn">
+                <div className="action-icon bg-indigo">{<CalendarCheck size={20} />}</div>
+                <div>
+                  <div className="action-title">View Calendar</div>
+                  <div className="action-desc">View all PTO requests on calendar</div>
+                </div>
+              </button>
             </div>
           </div>
+
           {/* Recent PTO Activity */}
           <div className="card">
             <div className="card-header">Recent PTO Requests</div>
             <div className="card-body">
-              {allRequests.slice(0, 5).map(request => (
+              {allRequests.slice(0, 8).map(request => (
                 <div key={request.id} className="request-row">
                   <div className="request-avatar">
                     {request.requester_name?.charAt(0) || '?'}
@@ -197,36 +276,294 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                     <span className="request-type">requested {request.leave_type}</span>
                     <div className="request-date">{new Date(request.start_date).toLocaleDateString()}</div>
                   </div>
-                  <span className={`status-badge status-${request.status}`}>{request.status}</span>
+                  <div className="request-actions">
+                    <span className={`status-badge status-${request.status}`}>{request.status}</span>
+                    <button 
+                      onClick={() => handleViewUserCalendar(request.requester_id)}
+                      className="btn-icon"
+                      title="View user's calendar"
+                    >
+                      <Eye size={14} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         </div>
       )}
-      {/* Analytics */}
-      {activeTab === 'analytics' && (
+
+      {/* Teams Tab */}
+      {activeTab === 'teams' && (
         <div className="dashboard-section">
           <div className="card">
-            <div className="card-header">PTO Requests by Status</div>
-            <div className="card-body">
-              <table className="dashboard-table">
-                <thead>
-                  <tr>
-                    <th>Status</th>
-                    <th>Count</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr><td>Approved</td><td>{stats.approvedRequests}</td></tr>
-                  <tr><td>Pending</td><td>{stats.pendingRequests}</td></tr>
-                  <tr><td>Total</td><td>{stats.totalRequests}</td></tr>
-                </tbody>
-              </table>
+            <div className="card-header">
+              <span>Team Management</span>
+              <button 
+                onClick={() => setShowTeamManagementModal(true)}
+                className="btn btn-primary"
+              >
+                Manage Teams
+              </button>
+            </div>
+            <div className="teams-grid">
+              {allTeams.map(team => {
+                const teamStats = getTeamStats(team.id);
+                return (
+                  <div key={team.id} className="team-admin-card">
+                    <div className="team-card-header">
+                      <div className="team-info">
+                        <h4 style={{ color: team.color || '#6366f1' }}>{team.name}</h4>
+                        {team.description && <p className="team-description">{team.description}</p>}
+                      </div>
+                      <div className="team-actions">
+                        <button 
+                          onClick={() => handleViewTeamCalendar(team.id)}
+                          className="btn btn-sm btn-secondary"
+                          title="View team calendar"
+                        >
+                          <CalendarCheck size={16} />
+                          Calendar
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="team-stats-grid">
+                      <div className="stat-item">
+                        <span className="stat-value">{teamStats.memberCount}</span>
+                        <span className="stat-label">Members</span>
+                      </div>
+                      <div className="stat-item">
+                        <span className="stat-value">{teamStats.totalRequests}</span>
+                        <span className="stat-label">Requests</span>
+                      </div>
+                      <div className="stat-item">
+                        <span className="stat-value">{teamStats.pendingRequests}</span>
+                        <span className="stat-label">Pending</span>
+                      </div>
+                      <div className="stat-item">
+                        <span className="stat-value">{teamStats.totalDaysOff}</span>
+                        <span className="stat-label">Days Off</span>
+                      </div>
+                    </div>
+
+                    {/* Team Members Preview */}
+                    <div className="team-members-preview">
+                      <h5>Recent Activity:</h5>
+                      {allRequests
+                        .filter(req => {
+                          const teamMemberIds = allUsers
+                            .filter(user => user.team_id === team.id)
+                            .map(user => user.jira_account_id || user.id);
+                          return teamMemberIds.includes(req.requester_id);
+                        })
+                        .slice(0, 3)
+                        .map(request => (
+                          <div key={request.id} className="activity-item">
+                            <span className="activity-user">{request.requester_name}</span>
+                            <span className="activity-action">
+                              {request.leave_type} • {new Date(request.start_date).toLocaleDateString()}
+                            </span>
+                            <span className={`activity-status status-${request.status}`}>
+                              {request.status}
+                            </span>
+                          </div>
+                        ))
+                      }
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
       )}
+
+      {/* Users Tab */}
+      {activeTab === 'users' && (
+        <div className="dashboard-section">
+          <div className="card">
+            <div className="card-header">
+              <span>User Management</span>
+              <button 
+                onClick={() => setShowTeamManagementModal(true)}
+                className="btn btn-primary"
+              >
+                Manage Users
+              </button>
+            </div>
+            <div className="users-grid">
+              {allUsers.map(user => {
+                const currentPTO = getUserCurrentPTO(user.jira_account_id || user.id);
+                const userTeam = allTeams.find(t => t.id === user.team_id);
+                const userRequests = allRequests.filter(req => 
+                  req.requester_id === (user.jira_account_id || user.id)
+                );
+                
+                return (
+                  <div key={user.id} className="user-admin-card">
+                    <div className="user-card-header">
+                      <div className="user-avatar-large">
+                        {user.avatar_url ? (
+                          <img src={user.avatar_url} alt={user.display_name} />
+                        ) : (
+                          <div className="avatar-placeholder-large">
+                            {(user.display_name || user.displayName || user.name)?.charAt(0) || '?'}
+                          </div>
+                        )}
+                      </div>
+                      <div className="user-info">
+                        <h4>{user.display_name || user.displayName || user.name}</h4>
+                        <p className="user-email">{user.email_address || user.emailAddress}</p>
+                        {userTeam && (
+                          <span className="user-team" style={{ color: userTeam.color }}>
+                            {userTeam.name}
+                          </span>
+                        )}
+                      </div>
+                      <div className="user-actions">
+                        <button 
+                          onClick={() => handleViewUserCalendar(user.jira_account_id || user.id)}
+                          className="btn btn-sm btn-secondary"
+                          title="View user's calendar"
+                        >
+                          <CalendarCheck size={16} />
+                          Calendar
+                        </button>
+                      </div>
+                    </div>
+
+                    {currentPTO && (
+                      <div className="current-pto-banner">
+                        🏖️ Currently on {currentPTO.leave_type} leave until {new Date(currentPTO.end_date).toLocaleDateString()}
+                      </div>
+                    )}
+
+                    <div className="user-stats-grid">
+                      <div className="stat-item">
+                        <span className="stat-value">{userRequests.length}</span>
+                        <span className="stat-label">Total Requests</span>
+                      </div>
+                      <div className="stat-item">
+                        <span className="stat-value">
+                          {userRequests.filter(r => r.status === 'pending').length}
+                        </span>
+                        <span className="stat-label">Pending</span>
+                      </div>
+                      <div className="stat-item">
+                        <span className="stat-value">
+                          {userRequests
+                            .filter(r => r.status === 'approved')
+                            .reduce((sum, r) => sum + (r.total_days || 0), 0)
+                          }
+                        </span>
+                        <span className="stat-label">Days Used</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Analytics Tab */}
+      {activeTab === 'analytics' && (
+        <div className="dashboard-section">
+          <div className="analytics-grid">
+            <div className="card">
+              <div className="card-header">PTO Requests by Status</div>
+              <div className="card-body">
+                <table className="dashboard-table">
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>Count</th>
+                      <th>Percentage</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>
+                        <span className="status-badge status-approved">Approved</span>
+                      </td>
+                      <td>{stats.approvedRequests}</td>
+                      <td>
+                        {stats.totalRequests > 0 
+                          ? Math.round((stats.approvedRequests / stats.totalRequests) * 100)
+                          : 0
+                        }%
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <span className="status-badge status-pending">Pending</span>
+                      </td>
+                      <td>{stats.pendingRequests}</td>
+                      <td>
+                        {stats.totalRequests > 0 
+                          ? Math.round((stats.pendingRequests / stats.totalRequests) * 100)
+                          : 0
+                        }%
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <span className="status-badge status-declined">Declined</span>
+                      </td>
+                      <td>{allRequests.filter(r => r.status === 'declined').length}</td>
+                      <td>
+                        {stats.totalRequests > 0 
+                          ? Math.round((allRequests.filter(r => r.status === 'declined').length / stats.totalRequests) * 100)
+                          : 0
+                        }%
+                      </td>
+                    </tr>
+                    <tr className="table-total">
+                      <td><strong>Total</strong></td>
+                      <td><strong>{stats.totalRequests}</strong></td>
+                      <td><strong>100%</strong></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header">Leave Types Distribution</div>
+              <div className="card-body">
+                <div className="leave-types-stats">
+                  {['vacation', 'sick', 'personal', 'holiday'].map(type => {
+                    const count = allRequests.filter(r => r.leave_type === type).length;
+                    const percentage = stats.totalRequests > 0 
+                      ? Math.round((count / stats.totalRequests) * 100) 
+                      : 0;
+                    return (
+                      <div key={type} className="leave-type-stat">
+                        <div className="leave-type-header">
+                          <span className="leave-type-name">
+                            {type.charAt(0).toUpperCase() + type.slice(1)}
+                          </span>
+                          <span className="leave-type-count">{count}</span>
+                        </div>
+                        <div className="leave-type-bar">
+                          <div 
+                            className="leave-type-progress" 
+                            style={{ width: `${percentage}%` }}
+                          ></div>
+                        </div>
+                        <span className="leave-type-percentage">{percentage}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modals */}
       {showAddAdmin && (
         <Modal title="Add Admin User" onClose={() => setShowAddAdmin(false)}>
@@ -236,9 +573,14 @@ const AdminManagement = ({ currentUser, showNotification }) => {
             placeholder="Search and select user to grant admin privileges"
             required
           />
-          <button className="btn btn-link" onClick={() => setShowAddAdmin(false)}>Close</button>
+          <div className="modal-actions">
+            <button className="btn btn-secondary" onClick={() => setShowAddAdmin(false)}>
+              Cancel
+            </button>
+          </div>
         </Modal>
       )}
+
       {showTeamManagementModal && (
         <TeamManagementModal
           isOpen={showTeamManagementModal}
@@ -281,6 +623,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
           onRefresh={loadAllAdminData}
         />
       )}
+
       {showAddPTOModal && (
         <PTOSubmissionModal
           isAdminMode
