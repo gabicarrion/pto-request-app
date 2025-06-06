@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Shield, Users, Calendar, Building2, UserCheck, X, Download, 
-  BarChart3, TrendingUp, Clock, CheckCircle, XCircle, Settings
+  BarChart3, TrendingUp, Clock, CheckCircle, XCircle, Settings, Plus
 } from 'lucide-react';
 import { invoke } from '@forge/bridge';
 import UserPicker from '../components/UserPicker';
@@ -20,7 +20,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
   const [showTeamManagementModal, setShowTeamManagementModal] = useState(false);
   const [showAddPTOModal, setShowAddPTOModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
-  const [selectedPTOUser, setSelectedPTOUser] = useState(null);
 
   // Report configuration state
   const [reportConfig, setReportConfig] = useState({
@@ -83,13 +82,11 @@ const AdminManagement = ({ currentUser, showNotification }) => {
 
   const loadJiraUsers = async () => {
     try {
-      const response = await invoke('getInternalJiraUsers', {
-        projectKey: 'DEFAULT',
-        startAt: 0,
-        maxResults: 100
+      const response = await invoke('getInternalJiraUsersByGroup', {
+        groupName: 'jira-users'
       });
       if (response.success) {
-        setJiraUsers(response.data.users || []);
+        setJiraUsers(response.data || []);
       }
     } catch (error) {
       console.error('Failed to load Jira users:', error);
@@ -165,7 +162,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
       if (response.success) {
         showNotification(`PTO request created for ${ptoData.targetUser.displayName}`);
         setShowAddPTOModal(false);
-        setSelectedPTOUser(null);
         loadAllRequests();
       } else {
         showNotification(response.message || 'Failed to create PTO request', 'error');
@@ -297,11 +293,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
       const teamName = team?.name || 'Unassigned';
       acc[teamName] = (acc[teamName] || 0) + 1;
       return acc;
-    }, {}),
-    
-    requestsByUser: allRequests.reduce((acc, req) => {
-      acc[req.requester_name] = (acc[req.requester_name] || 0) + 1;
-      return acc;
     }, {})
   };
 
@@ -340,6 +331,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
 
       {activeTab === 'overview' && (
         <div className="admin-section">
+          {/* Stats Cards - More professional */}
           <div className="admin-stats-grid">
             <div className="admin-stat-card admin-stat-purple">
               <div className="stat-icon">
@@ -371,6 +363,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
               </div>
             </div>
 
+            {/* Combined PTO Requests Card */}
             <div className="admin-stat-card admin-stat-indigo">
               <div className="stat-icon">
                 <Calendar size={24} />
@@ -378,26 +371,11 @@ const AdminManagement = ({ currentUser, showNotification }) => {
               <div className="stat-content">
                 <div className="stat-value">{stats.totalRequests}</div>
                 <div className="stat-label">Total Requests</div>
-              </div>
-            </div>
-
-            <div className="admin-stat-card admin-stat-yellow">
-              <div className="stat-icon">
-                <Clock size={24} />
-              </div>
-              <div className="stat-content">
-                <div className="stat-value">{stats.pendingRequests}</div>
-                <div className="stat-label">Pending</div>
-              </div>
-            </div>
-
-            <div className="admin-stat-card admin-stat-green">
-              <div className="stat-icon">
-                <CheckCircle size={24} />
-              </div>
-              <div className="stat-content">
-                <div className="stat-value">{stats.approvedRequests}</div>
-                <div className="stat-label">Approved</div>
+                <div className="stat-breakdown">
+                  <span className="breakdown-item green">{stats.approvedRequests} approved</span>
+                  <span className="breakdown-item orange">{stats.pendingRequests} pending</span>
+                  <span className="breakdown-item red">{stats.declinedRequests} declined</span>
+                </div>
               </div>
             </div>
           </div>
@@ -408,19 +386,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
             </div>
             <div className="card-body">
               <div className="admin-actions-grid">
-                <button 
-                  onClick={() => setShowAddAdmin(true)} 
-                  className="admin-action-btn"
-                >
-                  <div className="action-icon bg-purple">
-                    <Shield size={20} />
-                  </div>
-                  <div className="action-content">
-                    <div className="action-title">Add Admin</div>
-                    <div className="action-desc">Grant admin privileges to users</div>
-                  </div>
-                </button>
-
                 <button 
                   onClick={() => setShowAddPTOModal(true)} 
                   className="admin-action-btn"
@@ -606,7 +571,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
           {getUsersNotInSystem().length > 0 && (
             <div className="card users-not-in-system-card">
               <div className="card-header">
-                <h4>Jira Users Not Added to System</h4>
+                <h4>Internal Jira Users Not Added to System</h4>
                 <div className="users-count">
                   {getUsersNotInSystem().length} users
                 </div>
@@ -806,6 +771,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
         </div>
       )}
 
+      {/* Modal Components */}
       {showAddAdmin && (
         <Modal title="Add Admin User" onClose={() => setShowAddAdmin(false)}>
           <div className="add-admin-content">
@@ -954,16 +920,13 @@ const AdminManagement = ({ currentUser, showNotification }) => {
       {showAddPTOModal && (
         <PTOSubmissionModal
           isAdminMode={true}
-          onClose={() => {
-            setShowAddPTOModal(false);
-            setSelectedPTOUser(null);
-          }}
+          onClose={() => setShowAddPTOModal(false)}
           onSubmit={handleSubmitPTOForUser}
-          targetUser={selectedPTOUser}
           allUsers={allUsers}
           allTeams={allTeams}
           allRequests={allRequests}
           currentUser={currentUser}
+          isAdmin={true}
         />
       )}
     </div>

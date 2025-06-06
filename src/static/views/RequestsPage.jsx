@@ -4,8 +4,8 @@ import StatusBadge from '../components/StatusBadge';
 import { getLeaveTypeEmoji, getLeaveTypeColor } from '../components/leaveTypeUtils';
 
 const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest }) => {
-  const [dateFilter, setDateFilter] = useState('all'); // all, current_year, last_30_days, last_90_days
-  const [statusFilter, setStatusFilter] = useState('all'); // all, pending, approved, declined
+  const [dateFilter, setDateFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
 
   const formatDate = (dateString) =>
@@ -83,7 +83,7 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
       .filter(r => r.status === 'approved')
       .reduce((sum, r) => sum + (r.total_days || 0), 0);
 
-    // PTO by leave type
+    // PTO by leave type - FIXED
     const ptoByType = filteredRequests
       .filter(r => r.status === 'approved')
       .reduce((acc, request) => {
@@ -169,21 +169,21 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
           </div>
         )}
 
-        {/* Summary Cards */}
+        {/* Summary Cards - More compact */}
         <div className="summary-cards-container">
           <div className="summary-card stat-blue">
             <div className="summary-icon">
-              <Calendar size={24} />
+              <Calendar size={20} />
             </div>
             <div className="summary-content">
               <div className="summary-value">{stats.totalRequests}</div>
-              <div className="summary-label">Total Requests</div>
+              <div className="summary-label">Total</div>
             </div>
           </div>
 
           <div className="summary-card stat-yellow">
             <div className="summary-icon">
-              <Clock size={24} />
+              <Clock size={20} />
             </div>
             <div className="summary-content">
               <div className="summary-value">{stats.pendingRequests}</div>
@@ -193,7 +193,7 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
 
           <div className="summary-card stat-green">
             <div className="summary-icon">
-              <TrendingUp size={24} />
+              <TrendingUp size={20} />
             </div>
             <div className="summary-content">
               <div className="summary-value">{stats.approvedRequests}</div>
@@ -203,7 +203,7 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
 
           <div className="summary-card stat-red">
             <div className="summary-icon">
-              <BarChart3 size={24} />
+              <BarChart3 size={20} />
             </div>
             <div className="summary-content">
               <div className="summary-value">{stats.declinedRequests}</div>
@@ -213,18 +213,18 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
 
           <div className="summary-card stat-purple">
             <div className="summary-icon">
-              <Eye size={24} />
+              <Eye size={20} />
             </div>
             <div className="summary-content">
               <div className="summary-value">{stats.totalDays}</div>
-              <div className="summary-label">Approved Days</div>
+              <div className="summary-label">Days Off</div>
             </div>
           </div>
         </div>
       </div>
 
       <div className="requests-content">
-        {/* PTO Breakdown by Leave Type */}
+        {/* PTO Breakdown by Leave Type - FIXED */}
         {Object.keys(stats.ptoByType).length > 0 && (
           <div className="card pto-breakdown-card">
             <div className="card-header">
@@ -255,7 +255,7 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
           </div>
         )}
 
-        {/* Requests List */}
+        {/* Requests List - Compact Cards */}
         <div className="card requests-list-card">
           <div className="card-header">
             <h3>Request History</h3>
@@ -270,88 +270,85 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
                 <p>No requests found for the selected filters.</p>
               </div>
             ) : (
-              <div className="requests-list">
+              <div className="requests-list compact">
                 {filteredRequests.map(request => (
-                  <div key={request.id} className="request-item">
-                    <div className="request-main-content">
-                      <div className="request-header">
-                        <div className="request-type-info">
-                          <span className="request-emoji">
-                            {getLeaveTypeEmoji(request.leave_type)}
-                          </span>
-                          <div className="request-title-group">
-                            <h4 className="request-title">
-                              {request.leave_type.charAt(0).toUpperCase() + request.leave_type.slice(1)} Leave
-                            </h4>
-                            <div className="request-dates">
-                              {formatDate(request.start_date)} - {formatDate(request.end_date)}
-                            </div>
-                          </div>
-                        </div>
-                        
-                        <div className="request-status-section">
-                          <StatusBadge status={request.status} />
-                          <div className="request-duration">
-                            {request.total_days} {request.total_days === 1 ? 'day' : 'days'}
+                  <div key={request.id} className="request-item compact">
+                    <div className="request-header-compact">
+                      <div className="request-type-info">
+                        <span className="request-emoji">
+                          {getLeaveTypeEmoji(request.leave_type)}
+                        </span>
+                        <div className="request-title-group">
+                          <h4 className="request-title">
+                            {request.leave_type.charAt(0).toUpperCase() + request.leave_type.slice(1)}
+                          </h4>
+                          <div className="request-dates">
+                            {formatDate(request.start_date)} - {formatDate(request.end_date)}
                           </div>
                         </div>
                       </div>
-
-                      {request.reason && (
-                        <div className="request-reason">
-                          <span className="reason-label">Reason:</span>
-                          <span className="reason-text">{request.reason}</span>
+                      
+                      <div className="request-status-section">
+                        <StatusBadge status={request.status} />
+                        <div className="request-duration">
+                          {request.total_days} {request.total_days === 1 ? 'day' : 'days'}
                         </div>
-                      )}
+                      </div>
 
-                      <div className="request-metadata">
-                        <div className="metadata-item">
-                          <span className="metadata-label">Submitted:</span>
-                          <span className="metadata-value">{formatDateTime(request.submitted_at)}</span>
-                        </div>
+                      {/* Actions */}
+                      <div className="request-actions">
+                        {canEditRequest(request) && (
+                          <button
+                            onClick={() => onEditRequest && onEditRequest(request)}
+                            className="btn btn-sm btn-secondary"
+                            title="Edit Request"
+                          >
+                            <Edit size={14} />
+                          </button>
+                        )}
                         
-                        {request.status !== 'pending' && request.reviewed_at && (
-                          <div className="metadata-item">
-                            <span className="metadata-label">
-                              {request.status === 'approved' ? 'Approved:' : 'Declined:'}
-                            </span>
-                            <span className="metadata-value">{formatDate(request.reviewed_at)}</span>
-                          </div>
+                        {canCancelRequest(request) && (
+                          <button
+                            onClick={() => onCancelRequest && onCancelRequest(request)}
+                            className="btn btn-sm btn-danger"
+                            title="Cancel Request"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         )}
                       </div>
+                    </div>
 
-                      {/* Manager Comments */}
-                      {request.status !== 'pending' && request.reviewer_comments && (
-                        <div className="request-comments">
-                          <div className="comments-header">Manager Comments:</div>
-                          <div className="comments-text">{request.reviewer_comments}</div>
+                    {request.reason && (
+                      <div className="request-reason compact">
+                        <span className="reason-label">Reason:</span>
+                        <span className="reason-text">{request.reason}</span>
+                      </div>
+                    )}
+
+                    <div className="request-metadata compact">
+                      <div className="metadata-item">
+                        <span className="metadata-label">Submitted:</span>
+                        <span className="metadata-value">{formatDate(request.submitted_at)}</span>
+                      </div>
+                      
+                      {request.status !== 'pending' && request.reviewed_at && (
+                        <div className="metadata-item">
+                          <span className="metadata-label">
+                            {request.status === 'approved' ? 'Approved:' : 'Declined:'}
+                          </span>
+                          <span className="metadata-value">{formatDate(request.reviewed_at)}</span>
                         </div>
                       )}
                     </div>
 
-                    <div className="request-actions">
-                      {canEditRequest(request) && (
-                        <button
-                          onClick={() => onEditRequest && onEditRequest(request)}
-                          className="btn btn-sm btn-secondary"
-                          title="Edit Request"
-                        >
-                          <Edit size={14} />
-                          Edit
-                        </button>
-                      )}
-                      
-                      {canCancelRequest(request) && (
-                        <button
-                          onClick={() => onCancelRequest && onCancelRequest(request)}
-                          className="btn btn-sm btn-danger"
-                          title="Cancel Request"
-                        >
-                          <Trash2 size={14} />
-                          {request.status === 'pending' ? 'Cancel' : 'Remove'}
-                        </button>
-                      )}
-                    </div>
+                    {/* Manager Comments */}
+                    {request.status !== 'pending' && request.reviewer_comments && (
+                      <div className="request-comments compact">
+                        <div className="comments-header">Manager Comments:</div>
+                        <div className="comments-text">{request.reviewer_comments}</div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

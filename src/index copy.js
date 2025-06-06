@@ -1008,137 +1008,122 @@ resolver.define('getAdminUsers', async (req) => {
   }
 });
 
-resolver.define('getInternalJiraUsers', async (req) => {
+resolver.define('getInternalJiraUsers', async (payload) => {
+  const { projectKey, startAt = 0, maxResults = 50 } = payload;
+  console.log(`[Backend] getProjectUsersPaginated called for project: ${projectKey}, startAt: ${startAt}, maxResults: ${maxResults}`);
+  
   try {
-    const { startAt = 0, maxResults = 50 } = req.payload || {};
-    console.log(`🔍 Getting all internal Jira users - startAt: ${startAt}, maxResults: ${maxResults}`);
+    const response = await asUser().requestJira(
+      route`/rest/api/3/user/assignable/search?project=${projectKey}&startAt=${startAt}&maxResults=${maxResults}`
+    );
     
-    // Try multiple approaches to get all internal users
+    if (!response.ok) {
+      throw new Error(`Jira API returned ${response.status}`);
+    }
+    
+    const users = await response.json();    
+    // Ensure users is an array
+    const userArray = Array.isArray(users) ? users : [];
+    
+    return {
+      users: userArray,
+      startAt: startAt,
+      maxResults: maxResults,
+      total: userArray.length,
+      isLast: userArray.length < maxResults
+    };
+    
+  } catch (error) {
+    console.error(`[Backend] Error in getProjectUsersPaginated for ${projectKey}:`, error);
+    return {
+      users: [],
+      startAt: 0,
+      maxResults: maxResults,
+      total: 0,
+      isLast: true,
+      error: error.message
+    };
+  }
+});
+
+resolver.define('getInternalJiraUsersByGroup', async (req) => {
+  try {
+    const { groupName = 'jira-users' } = req.payload || {};
+    console.log('🔍 Getting internal Jira users from group:', groupName);
+    
+    // Try multiple group names to find internal users
+    const groupsToTry = [
+      groupName,
+      'jira-users',
+      'jira-software-users', 
+      'jira-administrators',
+      'atlassian-users-rebelmouse' // Company-specific group
+    ];
+    
     let allUsers = [];
     
-    // Method 1: Try assignable users for multiple projects
-    try {
-      const projectsResponse = await api.asUser().requestJira(route`/rest/api/3/project/search?maxResults=50`);
-      if (projectsResponse.ok) {
-        const projects = await projectsResponse.json();
-        const projectValues = projects.values || [];
-        
-        if (projectValues.length > 0) {
-          // Use the first available project
-          const projectKey = projectValues[0].key;
-          const usersResponse = await api.asUser().requestJira(
-            route`/rest/api/3/user/assignable/search?project=${projectKey}&startAt=${startAt}&maxResults=200`
-          );
-          
-          if (usersResponse.ok) {
-            const users = await usersResponse.json();
-            allUsers = users || [];
-          }
-        }
-      }
-    } catch (error) {
-      console.warn('Method 1 failed:', error.message);
-    }
-    
-    // Method 2: Try group-based approach if first method failed or returned few results
-    if (allUsers.length < 10) {
+    for (const group of groupsToTry) {
       try {
-        const groupsToTry = ['jira-users', 'jira-software-users', 'atlassian-users-rebelmouse'];
-        
-        for (const groupName of groupsToTry) {
-          try {
-            const groupResponse = await api.asUser().requestJira(
-              route`/rest/api/3/group/member?groupname=${encodeURIComponent(groupName)}&maxResults=200`
-            );
-            
-            if (groupResponse.ok) {
-              const groupData = await groupResponse.json();
-              if (groupData.values && groupData.values.length > allUsers.length) {
-                allUsers = groupData.values;
-                console.log(`✅ Found ${allUsers.length} users in group: ${groupName}`);
-                break;
-              }
-            }
-          } catch (groupError) {
-            console.warn(`Group ${groupName} failed:`, groupError.message);
-            continue;
-          }
-        }
-      } catch (error) {
-        console.warn('Method 2 failed:', error.message);
-      }
-    }
-    
-    // Method 3: Fallback to user search with common patterns
-    if (allUsers.length < 5) {
-      try {
-        const searchResponse = await api.asUser().requestJira(
-          route`/rest/api/3/user/search?query=&maxResults=200`
+        const response = await api.asUser().requestJira(
+          route`/rest/api/3/group/member?groupname=${encodeURIComponent(group)}&maxResults=200`
         );
         
-        if (searchResponse.ok) {
-          const searchUsers = await searchResponse.json();
-          allUsers = searchUsers || [];
+        if (response.ok) {
+          const groupData = await response.json();
+          if (groupData.values && groupData.values.length > 0) {
+            console.log(`✅ Found ${groupData.values.length} users in group: ${group}`);
+            
+            // Filter for active users only and add to collection
+            const activeUsers = groupData.values.filter(user => user.active !== false);
+            allUsers = allUsers.concat(activeUsers);
+          }
         }
-      } catch (error) {
-        console.warn('Method 3 failed:', error.message);
+      } catch (groupError) {
+        console.warn(`⚠️ Could not fetch group ${group}:`, groupError.message);
+        continue;
       }
     }
     
-    // Filter for company domain users if possible
-    const companyDomains = ['rebelmouse.com'];
-    const companyUsers = allUsers.filter(user => {
+    // Remove duplicates based on accountId
+    const uniqueUsers = allUsers.reduce((acc, user) => {
+      if (!acc.find(u => u.accountId === user.accountId)) {
+        acc.push(user);
+      }
+      return acc;
+    }, []);
+    
+    // Filter for company domain users if available
+    const companyDomains = ['rebelmouse.com']; // Add your company domains
+    const companyUsers = uniqueUsers.filter(user => {
       if (!user.emailAddress) return false;
-      return companyDomains.some(domain => 
-        user.emailAddress.toLowerCase().includes(domain.toLowerCase())
-      );
+      return companyDomains.some(domain => user.emailAddress.toLowerCase().includes(domain.toLowerCase()));
     });
     
-    // Use company users if found, otherwise use all users
-    const finalUsers = companyUsers.length > 0 ? companyUsers : allUsers;
+    // Use company users if found, otherwise use all unique users
+    const finalUsers = companyUsers.length > 0 ? companyUsers : uniqueUsers;
     
-    // Filter for active users and format response
-    const activeUsers = finalUsers
-      .filter(user => user.active !== false)
-      .map(user => ({
-        accountId: user.accountId,
-        displayName: user.displayName,
-        emailAddress: user.emailAddress,
-        avatarUrl: user.avatarUrls?.['48x48'] || user.avatarUrls?.['32x32'] || null,
-        active: user.active
-      }));
-    
-    // Apply pagination
-    const paginatedUsers = activeUsers.slice(startAt, startAt + maxResults);
-    
-    console.log(`✅ Returning ${paginatedUsers.length} of ${activeUsers.length} internal users`);
+    const userData = finalUsers.map(user => ({
+      accountId: user.accountId,
+      displayName: user.displayName,
+      emailAddress: user.emailAddress,
+      avatarUrl: user.avatarUrls?.['48x48'] || user.avatarUrls?.['32x32'] || null,
+      active: user.active
+    }));
+
+    console.log(`✅ Returning ${userData.length} internal users`);
     
     return {
       success: true,
-      data: {
-        users: paginatedUsers,
-        startAt: startAt,
-        maxResults: maxResults,
-        total: activeUsers.length,
-        isLast: (startAt + paginatedUsers.length) >= activeUsers.length
-      }
+      data: userData
     };
   } catch (error) {
     console.error('❌ Error getting internal Jira users:', error);
     return {
       success: false,
-      message: 'Failed to get internal Jira users: ' + error.message,
-      data: {
-        users: [],
-        startAt: 0,
-        maxResults: maxResults,
-        total: 0,
-        isLast: true
-      }
+      message: 'Failed to get internal Jira users: ' + error.message
     };
   }
 });
-
 
 
 // Enhanced User Creation from Jira
@@ -1201,122 +1186,6 @@ resolver.define('createUserFromJira', async (req) => {
     return {
       success: false,
       message: error.message || 'Failed to create user from Jira'
-    };
-  }
-});
-
-resolver.define('editPTORequest', async (req) => {
-  try {
-    const { requestId, updatedData, editedBy } = req.payload || {};
-    console.log(`✏️ Editing PTO request ${requestId}`);
-    
-    if (!requestId) {
-      throw new Error('Request ID is required');
-    }
-    
-    const requests = await storage.get('pto_requests') || [];
-    const requestIndex = requests.findIndex(r => r.id === requestId);
-    
-    if (requestIndex === -1) {
-      throw new Error('PTO request not found');
-    }
-    
-    const existingRequest = requests[requestIndex];
-    
-    // Check if user can edit this request
-    if (existingRequest.requester_id !== editedBy) {
-      throw new Error('You can only edit your own requests');
-    }
-    
-    // Only allow editing of pending requests
-    if (existingRequest.status !== 'pending') {
-      throw new Error('Only pending requests can be edited');
-    }
-    
-    // Check for conflicts with other requests (excluding the current one)
-    if (updatedData.startDate && updatedData.endDate) {
-      const conflictingRequests = requests.filter(request => 
-        request.id !== requestId &&
-        request.requester_id === editedBy &&
-        request.status !== 'declined' &&
-        !(new Date(updatedData.endDate) < new Date(request.start_date) || 
-          new Date(updatedData.startDate) > new Date(request.end_date))
-      );
-      
-      if (conflictingRequests.length > 0) {
-        throw new Error('This request conflicts with existing PTO requests for the same dates');
-      }
-    }
-    
-    // Calculate new totals if daily schedules are provided
-    let totalDays = updatedData.totalDays;
-    let totalHours = updatedData.totalHours;
-    
-    if (updatedData.dailySchedules && updatedData.dailySchedules.length > 0) {
-      totalDays = updatedData.dailySchedules.reduce((sum, schedule) => 
-        sum + (schedule.type === 'FULL_DAY' ? 1 : 0.5), 0
-      );
-      totalHours = updatedData.dailySchedules.reduce((sum, schedule) => 
-        sum + (schedule.type === 'FULL_DAY' ? 8 : 4), 0
-      );
-    }
-    
-    // Update the request - reset to pending and clear review data
-    requests[requestIndex] = {
-      ...existingRequest,
-      ...updatedData,
-      total_days: totalDays || existingRequest.total_days,
-      total_hours: totalHours || existingRequest.total_hours,
-      status: 'pending', // Reset to pending after edit
-      reviewed_at: null,
-      reviewer_comments: null,
-      updated_at: new Date().toISOString(),
-      edited_at: new Date().toISOString(),
-      edit_history: [
-        ...(existingRequest.edit_history || []),
-        {
-          edited_at: new Date().toISOString(),
-          edited_by: editedBy,
-          previous_data: {
-            start_date: existingRequest.start_date,
-            end_date: existingRequest.end_date,
-            reason: existingRequest.reason,
-            total_days: existingRequest.total_days
-          }
-        }
-      ]
-    };
-    
-    await storage.set('pto_requests', requests);
-    
-    // Update daily schedules if provided
-    if (updatedData.dailySchedules) {
-      const allSchedules = await storage.get('pto_daily_schedules') || [];
-      const filteredSchedules = allSchedules.filter(s => s.pto_request_id !== requestId);
-      
-      const newSchedules = updatedData.dailySchedules.map(schedule => ({
-        id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        pto_request_id: requestId,
-        date: schedule.date,
-        schedule_type: schedule.type,
-        leave_type: schedule.leaveType,
-        hours: schedule.type === 'FULL_DAY' ? 8 : 4,
-        created_at: new Date().toISOString()
-      }));
-      
-      await storage.set('pto_daily_schedules', [...filteredSchedules, ...newSchedules]);
-    }
-    
-    return {
-      success: true,
-      data: requests[requestIndex],
-      message: 'PTO request updated successfully and resubmitted for approval'
-    };
-  } catch (error) {
-    console.error('❌ Error editing PTO request:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to edit PTO request'
     };
   }
 });
@@ -1487,6 +1356,18 @@ resolver.define('bulkImportUsersFromJira', async (req) => {
   }
 });
 
+// Helper function for default availability
+function getDefaultAvailability() {
+  return [
+    { dayOfWeek: 1, dayName: 'Monday', isWorkingDay: true, startTime: '09:00', endTime: '17:00', hoursPerDay: 8 },
+    { dayOfWeek: 2, dayName: 'Tuesday', isWorkingDay: true, startTime: '09:00', endTime: '17:00', hoursPerDay: 8 },
+    { dayOfWeek: 3, dayName: 'Wednesday', isWorkingDay: true, startTime: '09:00', endTime: '17:00', hoursPerDay: 8 },
+    { dayOfWeek: 4, dayName: 'Thursday', isWorkingDay: true, startTime: '09:00', endTime: '17:00', hoursPerDay: 8 },
+    { dayOfWeek: 5, dayName: 'Friday', isWorkingDay: true, startTime: '09:00', endTime: '17:00', hoursPerDay: 8 },
+    { dayOfWeek: 6, dayName: 'Saturday', isWorkingDay: false, startTime: '', endTime: '', hoursPerDay: 0 },
+    { dayOfWeek: 7, dayName: 'Sunday', isWorkingDay: false, startTime: '', endTime: '', hoursPerDay: 0 }
+  ];
+}
 
 // Submit PTO request on behalf of another user (Admin only)
 resolver.define('submitPTOForUser', async (req) => {

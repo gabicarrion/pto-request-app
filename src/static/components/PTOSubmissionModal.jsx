@@ -28,29 +28,51 @@ const PTOSubmissionModal = ({
   const [errors, setErrors] = useState({});
   const [showUserNotInSystemAlert, setShowUserNotInSystemAlert] = useState(false);
 
-  // Initialize form when component mounts or data changes
+  // Check if user is in the system on mount
   useEffect(() => {
-    // Check if current user is in the system
     if (!isAdmin && !currentUserData) {
       setShowUserNotInSystemAlert(true);
+    } else {
+      setShowUserNotInSystemAlert(false);
     }
+  }, [isAdmin, currentUserData]);
 
-    // Initialize daily schedules from selected dates
-    const schedules = selectedDates.map(date => ({
-      date,
-      type: 'FULL_DAY',
-      leaveType: 'vacation'
-    }));
+  // Initialize form when component mounts or data changes
+  useEffect(() => {
+    // Initialize daily schedules from selected dates or date range
+    const initializeSchedules = () => {
+      let dates = [];
+      
+      if (selectedDates.length > 0) {
+        dates = selectedDates;
+      } else if (formData.startDate && formData.endDate) {
+        const start = new Date(formData.startDate);
+        const end = new Date(formData.endDate);
+        dates = [];
+        
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          dates.push(d.toISOString().split('T')[0]);
+        }
+      }
+      
+      const schedules = dates.map(date => ({
+        date,
+        type: 'FULL_DAY',
+        leaveType: 'vacation'
+      }));
 
-    setFormData(prev => ({
-      ...prev,
-      targetUser: isAdmin ? prev.targetUser : currentUser,
-      manager: userManager || prev.manager,
-      startDate: selectedDates[0] || '',
-      endDate: selectedDates[selectedDates.length - 1] || '',
-      dailySchedules: schedules
-    }));
-  }, [selectedDates, currentUser, currentUserData, userManager, isAdmin]);
+      setFormData(prev => ({
+        ...prev,
+        targetUser: isAdmin ? prev.targetUser : currentUser,
+        manager: userManager || prev.manager,
+        startDate: dates[0] || '',
+        endDate: dates[dates.length - 1] || '',
+        dailySchedules: schedules
+      }));
+    };
+
+    initializeSchedules();
+  }, [selectedDates, currentUser, userManager, isAdmin]);
 
   // Update daily schedules when date range changes
   useEffect(() => {
@@ -178,6 +200,17 @@ const PTOSubmissionModal = ({
       ...prev,
       dailySchedules: prev.dailySchedules.filter((_, i) => i !== index)
     }));
+    
+    // Update date range if removing first or last day
+    const updatedSchedules = formData.dailySchedules.filter((_, i) => i !== index);
+    if (updatedSchedules.length > 0) {
+      const dates = updatedSchedules.map(s => s.date).sort();
+      setFormData(prev => ({
+        ...prev,
+        startDate: dates[0],
+        endDate: dates[dates.length - 1]
+      }));
+    }
   };
 
   const markAllDaysWithLeaveType = (leaveType) => {

@@ -48,7 +48,7 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
 
   const isDateSelected = (date) => selectedDates.includes(formatDate(date));
 
-  // Apply filters to events
+  // Apply filters to events - FIXED
   const getFilteredEvents = () => {
     if (!events) return [];
 
@@ -62,13 +62,20 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
         if (!eventUser || eventUser.team_id !== filters.team) return false;
       }
 
-      // User filter
+      // User filter - FIXED
       if (filters.user === 'me') {
+        // Check both accountId and email to match current user
         if (event.requester_id !== currentUser?.accountId && 
             event.requester_email !== currentUser?.emailAddress) return false;
       } else if (filters.user !== 'all') {
-        if (event.requester_id !== filters.user && 
-            event.requester_email !== filters.user) return false;
+        // Check if the selected user matches the event
+        const selectedUser = allUsers?.find(user => 
+          user.jira_account_id === filters.user || user.id === filters.user
+        );
+        if (selectedUser) {
+          if (event.requester_id !== selectedUser.jira_account_id && 
+              event.requester_email !== selectedUser.email_address) return false;
+        }
       }
 
       // Leave type filter
@@ -110,6 +117,7 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
     }));
   };
 
+  // FIXED: Clear all filters function
   const clearAllFilters = () => {
     setFilters({
       team: 'all',
@@ -275,68 +283,71 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
         </p>
       </div>
 
-      {/* Calendar Grid - Day Names */}
-      <div className="calendar-days-row">
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-          <div key={day} className="calendar-day-label">{day}</div>
-        ))}
-      </div>
+      {/* Calendar Grid */}
+      <div className="calendar-grid">
+        {/* Day Names */}
+        <div className="calendar-days-header">
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+            <div key={day} className="calendar-day-label">{day}</div>
+          ))}
+        </div>
 
-      {/* Calendar Grid - Dates */}
-      <div className="calendar-days-row">
-        {days.map((day, index) => {
-          if (!day) return <div key={index} className="calendar-day calendar-day-empty"></div>;
-          const isSelected = isDateSelected(day);
-          const hasEventToday = hasEvent(day);
-          const dayEvents = getEventsForDate(day);
-          const isToday = day.toDateString() === new Date().toDateString();
-          const isPastDate = day < new Date(new Date().setHours(0, 0, 0, 0));
-          
-          return (
-            <div
-              key={day.toISOString()}
-              onClick={() => !isPastDate && onDateSelect(day)}
-              className={
-                "calendar-day" +
-                (isPastDate ? " calendar-day-past" : " calendar-day-active") +
-                (isSelected ? " calendar-day-selected" : "") +
-                (isToday ? " calendar-day-today" : "")
-              }
-            >
-              <div className="calendar-day-inner">
-                <span className={
-                  "calendar-day-number" +
-                  (isToday ? " calendar-day-number-today" : "") +
-                  (isPastDate ? " calendar-day-number-past" : "")
-                }>
-                  {day.getDate()}
-                </span>
-                <div className="calendar-day-events">
-                  {dayEvents.slice(0, 2).map((event, idx) => (
-                    <div
-                      key={`${event.id}-${idx}`}
-                      className={
-                        "calendar-event" +
-                        (event.status === 'approved' ? " calendar-event-approved" : "") +
-                        (event.status === 'pending' ? " calendar-event-pending" : "") +
-                        (event.status === 'declined' ? " calendar-event-declined" : "")
-                      }
-                      title={`${event.requester_name}: ${event.reason}`}
-                    >
-                      <span>{getLeaveTypeEmoji(event.leave_type)}</span>
-                      <span className="calendar-event-name">{event.requester_name}</span>
-                    </div>
-                  ))}
-                  {dayEvents.length > 2 && (
-                    <div className="calendar-event-more">
-                      +{dayEvents.length - 2} more
-                    </div>
-                  )}
+        {/* Calendar Days */}
+        <div className="calendar-days-grid">
+          {days.map((day, index) => {
+            if (!day) return <div key={index} className="calendar-day calendar-day-empty"></div>;
+            const isSelected = isDateSelected(day);
+            const hasEventToday = hasEvent(day);
+            const dayEvents = getEventsForDate(day);
+            const isToday = day.toDateString() === new Date().toDateString();
+            const isPastDate = day < new Date(new Date().setHours(0, 0, 0, 0));
+            
+            return (
+              <div
+                key={day.toISOString()}
+                onClick={() => !isPastDate && onDateSelect(day)}
+                className={
+                  "calendar-day" +
+                  (isPastDate ? " calendar-day-past" : " calendar-day-active") +
+                  (isSelected ? " calendar-day-selected" : "") +
+                  (isToday ? " calendar-day-today" : "")
+                }
+              >
+                <div className="calendar-day-inner">
+                  <span className={
+                    "calendar-day-number" +
+                    (isToday ? " calendar-day-number-today" : "") +
+                    (isPastDate ? " calendar-day-number-past" : "")
+                  }>
+                    {day.getDate()}
+                  </span>
+                  <div className="calendar-day-events">
+                    {dayEvents.slice(0, 2).map((event, idx) => (
+                      <div
+                        key={`${event.id}-${idx}`}
+                        className={
+                          "calendar-event" +
+                          (event.status === 'approved' ? " calendar-event-approved" : "") +
+                          (event.status === 'pending' ? " calendar-event-pending" : "") +
+                          (event.status === 'declined' ? " calendar-event-declined" : "")
+                        }
+                        title={`${event.requester_name}: ${event.reason}`}
+                      >
+                        <span>{getLeaveTypeEmoji(event.leave_type)}</span>
+                        <span className="calendar-event-name">{event.requester_name}</span>
+                      </div>
+                    ))}
+                    {dayEvents.length > 2 && (
+                      <div className="calendar-event-more">
+                        +{dayEvents.length - 2} more
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       {/* Legend */}

@@ -150,8 +150,8 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
   };
 
   const handleViewTeamCalendar = () => {
-    showNotification('Redirecting to team calendar view...', 'info');
     // This would trigger navigation to calendar with team filter
+    showNotification('Redirecting to team calendar view...', 'info');
   };
 
   // Filter team requests by selected member
@@ -171,7 +171,7 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
     
     const totalRequests = requests.length;
     const approvedRequests = requests.filter(r => r.status === 'approved').length;
-    const pendingRequests = requests.filter(r => r.status === 'pending').length;
+    const pendingTeamRequests = requests.filter(r => r.status === 'pending').length;
     const declinedRequests = requests.filter(r => r.status === 'declined').length;
     const totalDaysOff = requests
       .filter(r => r.status === 'approved')
@@ -212,7 +212,7 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
     return {
       totalRequests,
       approvedRequests,
-      pendingRequests,
+      pendingRequests: pendingTeamRequests,
       declinedRequests,
       totalDaysOff,
       ptoByLeaveType,
@@ -308,7 +308,7 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
         <div className="stat-card stat-yellow">
           <div className="stat-icon"><Clock size={24} /></div>
           <div className="stat-content">
-            <div className="stat-value">{analytics.pendingRequests}</div>
+            <div className="stat-value">{pendingRequests.length}</div>
             <div className="stat-label">Pending Approval</div>
           </div>
         </div>
@@ -339,7 +339,7 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
           </div>
           <div className="card-body">
             <div className="pending-requests-list">
-              {pendingRequests.slice(0, 3).map(request => (
+              {pendingRequests.slice(0, 5).map(request => (
                 <div key={request.id} className="pending-request-item">
                   <div className="request-info">
                     <div className="request-user">
@@ -387,11 +387,11 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
                 </div>
               ))}
             </div>
-            {pendingRequests.length > 3 && (
+            {pendingRequests.length > 5 && (
               <div className="show-more">
-                <button className="btn btn-secondary">
-                  View All {pendingRequests.length} Pending Requests
-                </button>
+                <p className="text-sm text-gray-600">
+                  {pendingRequests.length - 5} more pending requests...
+                </p>
               </div>
             )}
           </div>
@@ -413,7 +413,9 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
               <div className="analytics-section">
                 <h4>PTO by Leave Type</h4>
                 <div className="analytics-items">
-                  {Object.entries(analytics.ptoByLeaveType).map(([type, days]) => (
+                  {Object.entries(analytics.ptoByLeaveType)
+                    .sort(([,a], [,b]) => b - a)
+                    .map(([type, days]) => (
                     <div key={type} className="analytics-item">
                       <span className="item-icon">{getLeaveTypeEmoji(type)}</span>
                       <span className="item-label">{type.charAt(0).toUpperCase() + type.slice(1)}</span>
