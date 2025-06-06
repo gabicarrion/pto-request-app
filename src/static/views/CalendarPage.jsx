@@ -1,67 +1,33 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Filter, Users, User, X, Calendar as CalendarIcon } from 'lucide-react';
-import { invoke } from '@forge/bridge';
+import { Plus, Filter, X, Calendar, Users, User } from 'lucide-react';
 import PTOSubmissionModal from '../components/PTOSubmissionModal';
 import { getLeaveTypeEmoji } from '../components/leaveTypeUtils';
 
-const CalendarPage = ({ 
-  events, 
-  onDateSelect, 
-  selectedDates, 
-  onSubmitPTO, 
-  currentUser,
-  preselectedTeamId = null, // For admin deep-linking
-  preselectedUserId = null  // For admin deep-linking
-}) => {
+const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, currentUser, allUsers, allTeams, isAdmin }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [filters, setFilters] = useState({
+    team: 'all',
+    user: 'all',
+    leaveType: 'all',
+    status: 'all'
+  });
   const [showFilters, setShowFilters] = useState(false);
-  
-  // Filter state
-  const [selectedTeam, setSelectedTeam] = useState(preselectedTeamId || '');
-  const [selectedUser, setSelectedUser] = useState(preselectedUserId || '');
-  const [selectedStatuses, setSelectedStatuses] = useState(['approved', 'pending']);
-  
-  // Data for filters
-  const [teams, setTeams] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    loadFilterData();
-  }, []);
+  // Find current user in the users database
+  const currentUserData = allUsers?.find(user => 
+    user.jira_account_id === currentUser?.accountId ||
+    user.email_address === currentUser?.emailAddress
+  );
 
-  // Handle preselected filters from admin
-  useEffect(() => {
-    if (preselectedTeamId) {
-      setSelectedTeam(preselectedTeamId);
-      setShowFilters(true);
-    }
-    if (preselectedUserId) {
-      setSelectedUser(preselectedUserId);
-      setShowFilters(true);
-    }
-  }, [preselectedTeamId, preselectedUserId]);
-
-  const loadFilterData = async () => {
-    setLoading(true);
-    try {
-      // Load teams
-      const teamsResponse = await invoke('getTeams');
-      if (teamsResponse.success) {
-        setTeams(teamsResponse.data || []);
-      }
-
-      // Load users
-      const usersResponse = await invoke('getUsers');
-      if (usersResponse.success) {
-        setUsers(usersResponse.data || []);
-      }
-    } catch (error) {
-      console.error('Error loading filter data:', error);
-    } finally {
-      setLoading(false);
-    }
+  // Get user's manager if they exist in the system
+  const getUserManager = () => {
+    if (!currentUserData?.team_id) return null;
+    
+    const userTeam = allTeams?.find(team => team.id === currentUserData.team_id);
+    if (!userTeam?.manager) return null;
+    
+    return userTeam.manager;
   };
 
   const getDaysInMonth = (date) => {
@@ -82,41 +48,51 @@ const CalendarPage = ({
 
   const isDateSelected = (date) => selectedDates.includes(formatDate(date));
 
-  // Enhanced filtering logic
-  const getFilteredEventsForDate = (date) => {
-    const dateStr = formatDate(date);
-    let filteredEvents = events.filter(event => 
-      dateStr >= event.start_date && dateStr <= event.end_date
-    );
+  // Apply filters to events
+  const getFilteredEvents = () => {
+    if (!events) return [];
 
-    // Filter by status
-    if (selectedStatuses.length > 0) {
-      filteredEvents = filteredEvents.filter(event => 
-        selectedStatuses.includes(event.status)
-      );
-    }
+    return events.filter(event => {
+      // Team filter
+      if (filters.team !== 'all') {
+        const eventUser = allUsers?.find(user => 
+          user.jira_account_id === event.requester_id ||
+          user.email_address === event.requester_email
+        );
+        if (!eventUser || eventUser.team_id !== filters.team) return false;
+      }
 
-    // Filter by team
-    if (selectedTeam) {
-      const teamUsers = users.filter(user => user.team_id === selectedTeam);
-      const teamUserIds = teamUsers.map(user => user.jira_account_id || user.id);
-      filteredEvents = filteredEvents.filter(event => 
-        teamUserIds.includes(event.requester_id)
-      );
-    }
+      // User filter
+      if (filters.user === 'me') {
+        if (event.requester_id !== currentUser?.accountId && 
+            event.requester_email !== currentUser?.emailAddress) return false;
+      } else if (filters.user !== 'all') {
+        if (event.requester_id !== filters.user && 
+            event.requester_email !== filters.user) return false;
+      }
 
-    // Filter by specific user
-    if (selectedUser) {
-      filteredEvents = filteredEvents.filter(event => 
-        event.requester_id === selectedUser
-      );
-    }
+      // Leave type filter
+      if (filters.leaveType !== 'all' && event.leave_type !== filters.leaveType) return false;
 
-    return filteredEvents;
+      // Status filter
+      if (filters.status !== 'all' && event.status !== filters.status) return false;
+
+      return true;
+    });
   };
 
-  const hasFilteredEvent = (date) => {
-    return getFilteredEventsForDate(date).length > 0;
+  const hasEvent = (date) => {
+    const dateStr = formatDate(date);
+    return getFilteredEvents().some(event => 
+      dateStr >= event.start_date && dateStr <= event.end_date
+    );
+  };
+
+  const getEventsForDate = (date) => {
+    const dateStr = formatDate(date);
+    return getFilteredEvents().filter(event => 
+      dateStr >= event.start_date && dateStr <= event.end_date
+    );
   };
 
   const navigateMonth = (direction) => {
@@ -127,33 +103,46 @@ const CalendarPage = ({
     });
   };
 
-  const handlePTOSubmit = (ptoData) => {
-    onSubmitPTO(ptoData);
-    setShowSubmitModal(false);
+  const handleFilterChange = (filterType, value) => {
+    setFilters(prev => ({
+      ...prev,
+      [filterType]: value
+    }));
   };
 
-  const clearFilters = () => {
-    setSelectedTeam('');
-    setSelectedUser('');
-    setSelectedStatuses(['approved', 'pending']);
+  const clearAllFilters = () => {
+    setFilters({
+      team: 'all',
+      user: 'all',
+      leaveType: 'all',
+      status: 'all'
+    });
   };
 
-  const getActiveFiltersCount = () => {
-    let count = 0;
-    if (selectedTeam) count++;
-    if (selectedUser) count++;
-    if (selectedStatuses.length < 3) count++; // Less than all statuses
-    return count;
+  const hasActiveFilters = () => {
+    return Object.values(filters).some(value => value !== 'all');
   };
 
-  const getSelectedTeamName = () => {
-    const team = teams.find(t => t.id === selectedTeam);
-    return team ? team.name : '';
+  const handlePTOSubmit = async (ptoData) => {
+    const result = await onSubmitPTO(ptoData);
+    if (result?.success) {
+      setShowSubmitModal(false);
+    }
   };
 
-  const getSelectedUserName = () => {
-    const user = users.find(u => (u.jira_account_id || u.id) === selectedUser);
-    return user ? (user.display_name || user.displayName || user.name) : '';
+  // Get teams for filter dropdown
+  const getTeamsForFilter = () => {
+    if (!allTeams) return [];
+    
+    if (isAdmin) {
+      return allTeams; // Admins can see all teams
+    }
+    
+    // For non-admins, show teams they manage
+    return allTeams.filter(team => 
+      team.manager?.accountId === currentUser?.accountId ||
+      team.manager?.jira_account_id === currentUser?.accountId
+    );
   };
 
   const days = getDaysInMonth(currentDate);
@@ -162,41 +151,31 @@ const CalendarPage = ({
     "July", "August", "September", "October", "November", "December"
   ];
 
-  const activeFiltersCount = getActiveFiltersCount();
+  const leaveTypes = ['vacation', 'sick', 'personal', 'holiday'];
+  const statusTypes = ['pending', 'approved', 'declined'];
 
   return (
     <div className="card calendar-card">
       {/* Calendar Header */}
       <div className="calendar-header">
         <div className="calendar-header-controls">
-          <button
-            onClick={() => navigateMonth(-1)}
-            className="calendar-nav-btn"
-          >←</button>
+          <button onClick={() => navigateMonth(-1)} className="calendar-nav-btn">←</button>
           <h2 className="calendar-title">
             {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
           </h2>
-          <button
-            onClick={() => navigateMonth(1)}
-            className="calendar-nav-btn"
-          >→</button>
+          <button onClick={() => navigateMonth(1)} className="calendar-nav-btn">→</button>
         </div>
-
-        {/* Action Buttons */}
-        <div className="calendar-actions">
-          {/* Filter Toggle */}
+        
+        <div className="calendar-header-actions">
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`btn ${showFilters ? 'btn-primary' : 'btn-secondary'} calendar-filter-btn`}
+            className={`btn btn-secondary calendar-filter-btn ${hasActiveFilters() ? 'has-filters' : ''}`}
           >
             <Filter size={16} />
             <span>Filters</span>
-            {activeFiltersCount > 0 && (
-              <span className="filter-badge">{activeFiltersCount}</span>
-            )}
+            {hasActiveFilters() && <span className="filter-indicator">●</span>}
           </button>
-
-          {/* Submit PTO Button */}
+          
           {selectedDates.length > 0 && (
             <button
               onClick={() => setShowSubmitModal(true)}
@@ -209,174 +188,81 @@ const CalendarPage = ({
         </div>
       </div>
 
-      {/* Active Filters Display */}
-      {activeFiltersCount > 0 && (
-        <div className="calendar-active-filters">
-          <div className="active-filters-content">
-            <span className="active-filters-label">Active filters:</span>
-            <div className="active-filters-list">
-              {selectedTeam && (
-                <span className="filter-tag">
-                  <Users size={12} />
-                  Team: {getSelectedTeamName()}
-                  <button 
-                    onClick={() => setSelectedTeam('')}
-                    className="filter-tag-remove"
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
-              )}
-              {selectedUser && (
-                <span className="filter-tag">
-                  <User size={12} />
-                  User: {getSelectedUserName()}
-                  <button 
-                    onClick={() => setSelectedUser('')}
-                    className="filter-tag-remove"
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
-              )}
-              {selectedStatuses.length < 3 && (
-                <span className="filter-tag">
-                  <CalendarIcon size={12} />
-                  Status: {selectedStatuses.join(', ')}
-                  <button 
-                    onClick={() => setSelectedStatuses(['approved', 'pending', 'declined'])}
-                    className="filter-tag-remove"
-                  >
-                    <X size={12} />
-                  </button>
-                </span>
-              )}
-            </div>
-            <button onClick={clearFilters} className="clear-filters-btn">
-              Clear all
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Filter Panel */}
+      {/* Filters Panel */}
       {showFilters && (
         <div className="calendar-filters-panel">
-          <div className="filters-content">
-            <h4>Filter Calendar Events</h4>
-            
-            <div className="filters-grid">
-              {/* Team Filter */}
-              <div className="filter-group">
-                <label className="filter-label">
-                  <Users size={16} />
-                  Filter by Team
-                </label>
-                <select
-                  value={selectedTeam}
-                  onChange={(e) => {
-                    setSelectedTeam(e.target.value);
-                    // Clear user filter if team changes
-                    if (e.target.value) setSelectedUser('');
-                  }}
-                  className="filter-select"
-                  disabled={loading}
-                >
-                  <option value="">All Teams</option>
-                  {teams.map(team => (
-                    <option key={team.id} value={team.id}>
-                      {team.name} ({team.members?.length || 0} members)
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* User Filter */}
-              <div className="filter-group">
-                <label className="filter-label">
-                  <User size={16} />
-                  Filter by User
-                </label>
-                <select
-                  value={selectedUser}
-                  onChange={(e) => {
-                    setSelectedUser(e.target.value);
-                    // Clear team filter if user is selected
-                    if (e.target.value) setSelectedTeam('');
-                  }}
-                  className="filter-select"
-                  disabled={loading}
-                >
-                  <option value="">All Users</option>
-                  <option value={currentUser?.accountId}>
-                    👤 {currentUser?.displayName} (Me)
-                  </option>
-                  <optgroup label="Team Members">
-                    {users
-                      .filter(user => 
-                        (user.jira_account_id || user.id) !== currentUser?.accountId
-                      )
-                      .sort((a, b) => 
-                        (a.display_name || a.displayName || a.name || '').localeCompare(
-                          b.display_name || b.displayName || b.name || ''
-                        )
-                      )
-                      .map(user => (
-                        <option 
-                          key={user.id} 
-                          value={user.jira_account_id || user.id}
-                        >
-                          {user.display_name || user.displayName || user.name}
-                          {user.team_id && teams.find(t => t.id === user.team_id) && 
-                            ` (${teams.find(t => t.id === user.team_id)?.name})`
-                          }
-                        </option>
-                      ))
-                    }
-                  </optgroup>
-                </select>
-              </div>
-
-              {/* Status Filter */}
-              <div className="filter-group">
-                <label className="filter-label">
-                  <CalendarIcon size={16} />
-                  Request Status
-                </label>
-                <div className="status-checkboxes">
-                  {['approved', 'pending', 'declined'].map(status => (
-                    <label key={status} className="status-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={selectedStatuses.includes(status)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedStatuses(prev => [...prev, status]);
-                          } else {
-                            setSelectedStatuses(prev => prev.filter(s => s !== status));
-                          }
-                        }}
-                      />
-                      <span className={`status-label status-${status}`}>
-                        {status.charAt(0).toUpperCase() + status.slice(1)}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="filters-actions">
-              <button onClick={clearFilters} className="btn btn-secondary">
-                Clear Filters
-              </button>
-              <button 
-                onClick={() => setShowFilters(false)} 
-                className="btn btn-primary"
+          <div className="filters-grid">
+            <div className="filter-group">
+              <label>Team</label>
+              <select
+                value={filters.team}
+                onChange={(e) => handleFilterChange('team', e.target.value)}
+                className="form-control"
               >
-                Apply Filters
-              </button>
+                <option value="all">All Teams</option>
+                {getTeamsForFilter().map(team => (
+                  <option key={team.id} value={team.id}>{team.name}</option>
+                ))}
+              </select>
             </div>
+
+            <div className="filter-group">
+              <label>User</label>
+              <select
+                value={filters.user}
+                onChange={(e) => handleFilterChange('user', e.target.value)}
+                className="form-control"
+              >
+                <option value="all">All Users</option>
+                <option value="me">Me</option>
+                {allUsers?.map(user => (
+                  <option key={user.id} value={user.jira_account_id || user.id}>
+                    {user.display_name || user.displayName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label>Leave Type</label>
+              <select
+                value={filters.leaveType}
+                onChange={(e) => handleFilterChange('leaveType', e.target.value)}
+                className="form-control"
+              >
+                <option value="all">All Types</option>
+                {leaveTypes.map(type => (
+                  <option key={type} value={type}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-group">
+              <label>Status</label>
+              <select
+                value={filters.status}
+                onChange={(e) => handleFilterChange('status', e.target.value)}
+                className="form-control"
+              >
+                <option value="all">All Status</option>
+                {statusTypes.map(status => (
+                  <option key={status} value={status}>
+                    {status.charAt(0).toUpperCase() + status.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="filters-actions">
+            <button onClick={clearAllFilters} className="btn btn-secondary">
+              Clear All
+            </button>
+            <button onClick={() => setShowFilters(false)} className="btn btn-primary">
+              Apply Filters
+            </button>
           </div>
         </div>
       )}
@@ -384,10 +270,8 @@ const CalendarPage = ({
       {/* Calendar Instructions */}
       <div className="calendar-info">
         <p>
-          💡 Click on dates to select them for your PTO request. 
-          {activeFiltersCount > 0 && (
-            <span> Currently showing filtered events ({activeFiltersCount} filter{activeFiltersCount !== 1 ? 's' : ''} active).</span>
-          )}
+          💡 Click on dates to select them for your PTO request. Selected dates will be highlighted in blue.
+          {hasActiveFilters() && <span> • Filters are active - some events may be hidden.</span>}
         </p>
       </div>
 
@@ -402,10 +286,9 @@ const CalendarPage = ({
       <div className="calendar-days-row">
         {days.map((day, index) => {
           if (!day) return <div key={index} className="calendar-day calendar-day-empty"></div>;
-          
           const isSelected = isDateSelected(day);
-          const hasEventToday = hasFilteredEvent(day);
-          const dayEvents = getFilteredEventsForDate(day);
+          const hasEventToday = hasEvent(day);
+          const dayEvents = getEventsForDate(day);
           const isToday = day.toDateString() === new Date().toDateString();
           const isPastDate = day < new Date(new Date().setHours(0, 0, 0, 0));
           
@@ -438,7 +321,7 @@ const CalendarPage = ({
                         (event.status === 'pending' ? " calendar-event-pending" : "") +
                         (event.status === 'declined' ? " calendar-event-declined" : "")
                       }
-                      title={`${event.requester_name}: ${event.reason} (${event.status})`}
+                      title={`${event.requester_name}: ${event.reason}`}
                     >
                       <span>{getLeaveTypeEmoji(event.leave_type)}</span>
                       <span className="calendar-event-name">{event.requester_name}</span>
@@ -482,6 +365,13 @@ const CalendarPage = ({
           selectedDates={selectedDates}
           onClose={() => setShowSubmitModal(false)}
           onSubmit={handlePTOSubmit}
+          currentUser={currentUser}
+          currentUserData={currentUserData}
+          userManager={getUserManager()}
+          allUsers={allUsers}
+          allTeams={allTeams}
+          allRequests={events}
+          isAdmin={isAdmin}
         />
       )}
     </div>

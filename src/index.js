@@ -789,11 +789,84 @@ resolver.define('getAdminUsers', async (req) => {
   }
 });
 
+resolver.define('getInternalJiraUsers', async (payload) => {
+  const { projectKey, startAt = 0, maxResults = 50 } = payload;
+  console.log(`[Backend] getProjectUsersPaginated called for project: ${projectKey}, startAt: ${startAt}, maxResults: ${maxResults}`);
+  
+  try {
+    const response = await asUser().requestJira(
+      route`/rest/api/3/user/assignable/search?project=${projectKey}&startAt=${startAt}&maxResults=${maxResults}`
+    );
+    
+    if (!response.ok) {
+      throw new Error(`Jira API returned ${response.status}`);
+    }
+    
+    const users = await response.json();    
+    // Ensure users is an array
+    const userArray = Array.isArray(users) ? users : [];
+    
+    return {
+      users: userArray,
+      startAt: startAt,
+      maxResults: maxResults,
+      total: userArray.length,
+      isLast: userArray.length < maxResults
+    };
+    
+  } catch (error) {
+    console.error(`[Backend] Error in getProjectUsersPaginated for ${projectKey}:`, error);
+    return {
+      users: [],
+      startAt: 0,
+      maxResults: maxResults,
+      total: 0,
+      isLast: true,
+      error: error.message
+    };
+  }
+});
+
+resolver.define('getInternalJiraUsersByGroup', async (req) => {
+  try {
+    const { groupName = 'jira-users' } = req.payload || {}; // Default group name
+    console.log('🔍 Getting internal Jira users from group:', groupName);
+    
+    const response = await api.asUser().requestJira(
+      route`/rest/api/3/group/member?groupname=${groupName}&maxResults=100`
+    );
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const groupMembers = await response.json();
+    
+    const userData = groupMembers.values?.map(user => ({
+      accountId: user.accountId,
+      displayName: user.displayName,
+      emailAddress: user.emailAddress,
+      avatarUrl: user.avatarUrls?.['48x48'] || user.avatarUrls?.['32x32'] || null,
+      active: user.active
+    })) || [];
+
+    return {
+      success: true,
+      data: userData
+    };
+  } catch (error) {
+    console.error('❌ Error getting internal Jira users by group:', error);
+    return {
+      success: false,
+      message: 'Failed to get internal Jira users by group: ' + error.message
+    };
+  }
+});
 // Submit PTO request on behalf of another user (Admin only)
 resolver.define('submitPTOForUser', async (req) => {
   try {
-    const { requestData, submittedBy } = req.payload || {};
-    console.log('👑 Admin submitting PTO for user:', requestData?.requester_id);
+    const { requestData, submittedBy } = req.payload;
+    console.log('👑 Admin submitting PTO for user:', requestData.requester_id);
     
     // Verify admin status
     const admins = await storage.get('pto_admins') || [];
@@ -801,9 +874,37 @@ resolver.define('submitPTOForUser', async (req) => {
       throw new Error('Unauthorized: Admin privileges required');
     }
     
-    // Create PTO request with admin flag
-    const ptoRequest = {
-      id: `pto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    // Validate required fields
+    if (!requestData.requester_id || !requestData.start_date || !requestData.end_date) {
+      throw new Error('Missing required fields: requester_id, start_date, end_date');
+    }
+    
+    // Calculate totals if not provided
+    let totalDays = requestData.total_days;
+    let totalHours = requestData.total_hours;
+    
+    if (requestData.daily_schedules && requestData.daily_schedules.length > 0) {
+      totalDays = requestData.daily_schedules.reduce((sum, schedule) => 
+        sum + (schedule.type === 'FULL_DAY' ? 1 : 0.5), 0
+      );
+      totalHours = requestData.daily_schedules.reduce((sum, schedule) => 
+        sum + (schedule.type === 'FULL_DAY' ? 8 : 4), 0
+      );
+    } else {
+      // Calculate based on date range
+      const start = new Date(requestData.start_date);
+      const end = new Date(requestData.end_date);
+      const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
+      totalDays = totalDays || daysDiff;
+      totalHours = totalHours || (daysDiff * 8);
+    }
+    
+    // Get existing requests
+    const requests = await storage.get('pto_requests') || [];
+    
+    // Create new request with admin privileges
+    const newRequest = {
+      id: `pto-admin-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       requester_id: requestData.requester_id,
       requester_name: requestData.requester_name,
       requester_email: requestData.requester_email,
@@ -815,26 +916,30 @@ resolver.define('submitPTOForUser', async (req) => {
       end_date: requestData.end_date,
       leave_type: requestData.leave_type,
       reason: requestData.reason,
-      status: requestData.status || 'approved',
-      total_days: requestData.total_days,
-      total_hours: requestData.total_hours,
+      status: requestData.status || 'approved', // Admin can directly approve
+      total_days: totalDays,
+      total_hours: totalHours,
       submitted_at: new Date().toISOString(),
+      reviewed_at: new Date().toISOString(),
+      reviewer_comments: 'Created by admin',
       submitted_by_admin: true,
       admin_id: submittedBy,
       daily_schedules: requestData.daily_schedules || []
     };
     
-    const requests = await storage.get('pto_requests') || [];
-    requests.push(ptoRequest);
+    // Add to storage
+    requests.push(newRequest);
     await storage.set('pto_requests', requests);
+    
+    console.log('✅ Admin PTO request created:', newRequest.id);
     
     return {
       success: true,
-      data: ptoRequest,
-      message: 'PTO request submitted successfully by admin'
+      data: newRequest,
+      message: 'PTO request created successfully by admin'
     };
   } catch (error) {
-    console.error('❌ Error submitting PTO for user:', error);
+    console.error('❌ Error creating admin PTO request:', error);
     return {
       success: false,
       message: error.message

@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Calendar, Clock, Users, CheckCircle, User, Shield } from 'lucide-react';
+import { Calendar, Clock, Users, CheckCircle, User, Shield, UserCheck } from 'lucide-react';
 import { invoke } from '@forge/bridge';
 
 // Components
 import Notification from './components/Notifications';
 import AdminManagement from './views/AdminManagement';
-import TeamPage from './views/TeamPage';
+import ManagerView from './views/ManagerView';
 
 // Pages & Hooks
 import CalendarPage from './views/CalendarPage';
 import RequestsPage from './views/RequestsPage';
-import ApprovalsPage from './views/ApprovalsPage';
 
 import useCurrentUser from './hooks/useCurrentUser';
 import usePTORequests from './hooks/usePTORequests';
@@ -22,7 +21,8 @@ const PTOManagementApp = () => {
   const [notification, setNotification] = useState(null);
   const [appLoading, setAppLoading] = useState(true);
   const [userTeams, setUserTeams] = useState([]);
-  const [initializationError, setInitializationError] = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
+  const [allTeams, setAllTeams] = useState([]);
 
   // Custom hooks
   const { currentUser, loading: userLoading, error: userError, isAdmin } = useCurrentUser();
@@ -38,82 +38,82 @@ const PTOManagementApp = () => {
     getPendingRequests
   } = usePTORequests(currentUser);
 
-  // Load user teams
+  // Check if user is a manager
+  const [isManager, setIsManager] = useState(false);
+
+  // Load additional data
   useEffect(() => {
-    const loadUserTeams = async () => {
+    const loadAllData = async () => {
       if (!currentUser) return;
       
       try {
+        // Load user teams
         const response = await invoke('getUserTeams', { userId: currentUser.accountId });
         if (response.success) {
           setUserTeams(response.data || []);
         }
+
+        // Load all users and teams for admin/manager functionality
+        const [usersResponse, teamsResponse] = await Promise.all([
+          invoke('getUsers'),
+          invoke('getTeams')
+        ]);
+
+        if (usersResponse.success) {
+          setAllUsers(usersResponse.data || []);
+        }
+
+        if (teamsResponse.success) {
+          const teams = teamsResponse.data || [];
+          setAllTeams(teams);
+          
+          // Check if current user is a manager of any team
+          const managedTeams = teams.filter(team =>
+            team.manager?.accountId === currentUser.accountId ||
+            team.manager?.jira_account_id === currentUser.accountId
+          );
+          setIsManager(managedTeams.length > 0 || isAdmin);
+        }
       } catch (error) {
-        console.error('Error loading user teams:', error);
+        console.error('Error loading additional data:', error);
       }
     };
 
-    loadUserTeams();
-  }, [currentUser]);
+    loadAllData();
+  }, [currentUser, isAdmin]);
 
-  // Initialize app - FIXED VERSION
+  // Initialize app with admin setup
   useEffect(() => {
     const initializeApp = async () => {
       setAppLoading(true);
-      setInitializationError(null);
-      
       try {
-        console.log('🔧 Initializing PTO App...');
+        console.log('🔧 Initializing PTO App with Admin Setup...');
         
-        // Step 1: Initialize basic PTO database
-        const dbResult = await invoke('initializePTODatabase');
+        // Initialize database and set up default admin
+        const dbResult = await invoke('initializePTODatabaseWithTeamManagement');
         if (!dbResult.success) {
-          throw new Error(dbResult.message || 'Failed to initialize database');
-        }
-        console.log('✅ Basic PTO database initialized');
-
-        // Step 2: Initialize team user service
-        try {
-          const teamResult = await invoke('initializeTeamUserService');
-          if (teamResult.success) {
-            console.log('✅ Team user service initialized');
-          } else {
-            console.warn('⚠️ Team service initialization failed:', teamResult.message);
+          console.warn('Admin setup failed, trying regular init:', dbResult.message);
+          // Fallback to regular initialization
+          const fallbackResult = await invoke('initializePTODatabase');
+          if (!fallbackResult.success) {
+            throw new Error(fallbackResult.message);
           }
-        } catch (teamError) {
-          console.warn('⚠️ Team service not available:', teamError.message);
-        }
-
-        // Step 3: Set up default admin (if current user is available)
-        if (currentUser?.accountId) {
-          try {
-            const adminResult = await invoke('setupDefaultAdmin');
-            if (adminResult.success) {
-              console.log('✅ Admin setup completed');
-            } else {
-              console.warn('⚠️ Admin setup failed:', adminResult.message);
-            }
-          } catch (adminError) {
-            console.warn('⚠️ Admin setup not available:', adminError.message);
-          }
+        } else {
+          console.log('✅ PTO App and Admin initialized:', dbResult.data);
         }
         
         console.log('✅ PTO App initialization complete');
         
       } catch (error) {
         console.error('❌ App initialization failed:', error);
-        setInitializationError(error.message);
         showNotification('Failed to initialize app: ' + error.message, 'error');
       } finally {
         setAppLoading(false);
       }
     };
 
-    // Only initialize once when the app starts
-    if (appLoading) {
-      initializeApp();
-    }
-  }, []); // Remove currentUser dependency to avoid loops
+    initializeApp();
+  }, []);
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -131,19 +131,38 @@ const PTOManagementApp = () => {
 
   const handlePTOSubmit = async (ptoData) => {
     try {
-      // Prepare request data in the format expected by your backend
+      // Find current user data in the system
+      const currentUserData = allUsers.find(user => 
+        user.jira_account_id === currentUser?.accountId ||
+        user.email_address === currentUser?.emailAddress
+      );
+
+      // Get user's manager if they exist in the system
+      let userManager = null;
+      if (currentUserData?.team_id) {
+        const userTeam = allTeams.find(team => team.id === currentUserData.team_id);
+        if (userTeam?.manager) {
+          userManager = userTeam.manager;
+        }
+      }
+
+      // Prepare request data in the format expected by backend
       const requestData = {
-        reporter: currentUser,
-        manager: ptoData.manager || {
-          accountId: "manager-default", // You might want to implement manager selection
+        reporter: ptoData.targetUser || currentUser,
+        manager: ptoData.manager || userManager || {
+          accountId: "manager-default",
           displayName: "Manager",
           emailAddress: "manager@company.com"
         },
-        startDate: selectedDates[0],
-        endDate: selectedDates[selectedDates.length - 1],
-        leaveType: ptoData.leaveType,
-        reason: ptoData.reason,
-        dailySchedules: ptoData.dailySchedules
+        startDate: ptoData.startDate || selectedDates[0],
+        endDate: ptoData.endDate || selectedDates[selectedDates.length - 1],
+        leaveType: ptoData.leaveType || ptoData.dailySchedules?.[0]?.leaveType || 'vacation',
+        reason: ptoData.reason || '',
+        dailySchedules: ptoData.dailySchedules || selectedDates.map(date => ({
+          date,
+          type: 'FULL_DAY',
+          leaveType: 'vacation'
+        }))
       };
       
       const result = await submitRequest(requestData);
@@ -151,13 +170,16 @@ const PTOManagementApp = () => {
       if (result.success) {
         setSelectedDates([]);
         showNotification('PTO request submitted successfully!');
+        return { success: true };
       } else {
         showNotification(result.message || 'Failed to submit PTO request', 'error');
+        return { success: false };
       }
       
     } catch (error) {
       console.error('Error submitting PTO request:', error);
       showNotification('Failed to submit PTO request', 'error');
+      return { success: false };
     }
   };
 
@@ -202,7 +224,7 @@ const PTOManagementApp = () => {
     }
   };
 
-  // Navigation tabs configuration - now includes admin tab
+  // Navigation tabs configuration
   const tabs = [
     { 
       id: 'calendar', 
@@ -216,18 +238,13 @@ const PTOManagementApp = () => {
       icon: Clock,
       description: 'View your PTO request history'
     },
-    { 
-      id: 'approvals', 
-      label: 'Approvals', 
-      icon: CheckCircle,
-      description: 'Approve team PTO requests'
-    },
-    { 
-      id: 'team', 
-      label: 'Team', 
-      icon: Users,
-      description: 'Team dashboard and analytics'
-    },
+    // Show Manager view for managers and admins
+    ...(isManager ? [{ 
+      id: 'manager', 
+      label: 'Manager', 
+      icon: UserCheck,
+      description: 'Manage team PTO requests'
+    }] : []),
     // Admin tab - only show for admin users
     ...(isAdmin ? [{ 
       id: 'admin', 
@@ -250,18 +267,7 @@ const PTOManagementApp = () => {
         <div className="text-center">
           <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Initializing PTO Management</h2>
-          <p className="text-gray-600">Setting up database and user services...</p>
-          {initializationError && (
-            <div className="mt-4 p-3 bg-red-100 border border-red-300 rounded-md">
-              <p className="text-red-700 text-sm">Error: {initializationError}</p>
-              <button 
-                onClick={() => window.location.reload()} 
-                className="mt-2 px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600"
-              >
-                Retry
-              </button>
-            </div>
-          )}
+          <p className="text-gray-600">Setting up database and admin users...</p>
         </div>
       </div>
     );
@@ -320,10 +326,12 @@ const PTOManagementApp = () => {
             <div className="flex items-center space-x-4">
               {/* Quick Stats */}
               <div className="hidden md:flex items-center space-x-4 text-sm text-gray-600">
-                <div className="flex items-center space-x-1">
-                  <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
-                  <span>{pendingRequests.length} pending</span>
-                </div>
+                {isManager && (
+                  <div className="flex items-center space-x-1">
+                    <div className="w-2 h-2 bg-orange-400 rounded-full"></div>
+                    <span>{pendingRequests.length} pending approvals</span>
+                  </div>
+                )}
                 <div className="flex items-center space-x-1">
                   <div className="w-2 h-2 bg-green-400 rounded-full"></div>
                   <span>{userRequests.filter(r => r.status === 'approved').length} approved</span>
@@ -345,11 +353,17 @@ const PTOManagementApp = () => {
                       <Shield size={8} className="text-white" />
                     </div>
                   )}
+                  {isManager && !isAdmin && (
+                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 rounded-full flex items-center justify-center">
+                      <UserCheck size={8} className="text-white" />
+                    </div>
+                  )}
                 </div>
                 <div className="hidden sm:block">
                   <div className="text-sm font-medium text-gray-700 flex items-center space-x-1">
                     <span>{currentUser.displayName}</span>
                     {isAdmin && <Shield size={12} className="text-purple-600" />}
+                    {isManager && !isAdmin && <UserCheck size={12} className="text-orange-600" />}
                   </div>
                   <div className="text-xs text-gray-500">{currentUser.emailAddress}</div>
                 </div>
@@ -375,6 +389,8 @@ const PTOManagementApp = () => {
                     isActive
                       ? tab.id === 'admin' 
                         ? 'border-purple-500 text-purple-600'
+                        : tab.id === 'manager'
+                        ? 'border-orange-500 text-orange-600'
                         : 'border-blue-500 text-blue-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                   }`}
@@ -382,14 +398,19 @@ const PTOManagementApp = () => {
                 >
                   <Icon size={16} />
                   <span>{tab.label}</span>
-                  {tab.id === 'approvals' && pendingRequests.length > 0 && (
-                    <span className="bg-red-500 text-white text-xs rounded-full px-2 py-0.5 min-w-[20px] text-center">
+                  {tab.id === 'manager' && pendingRequests.length > 0 && (
+                    <span className="bg-orange-500 text-white text-xs rounded-full px-2 py-0.5 min-w-[20px] text-center">
                       {pendingRequests.length}
                     </span>
                   )}
                   {tab.id === 'admin' && (
                     <span className="bg-purple-100 text-purple-600 text-xs rounded-full px-2 py-0.5">
                       Admin
+                    </span>
+                  )}
+                  {tab.id === 'manager' && !isAdmin && (
+                    <span className="bg-orange-100 text-orange-600 text-xs rounded-full px-2 py-0.5">
+                      Manager
                     </span>
                   )}
                 </button>
@@ -407,6 +428,10 @@ const PTOManagementApp = () => {
             onDateSelect={handleDateSelect}
             selectedDates={selectedDates}
             onSubmitPTO={handlePTOSubmit}
+            currentUser={currentUser}
+            allUsers={allUsers}
+            allTeams={allTeams}
+            isAdmin={isAdmin}
           />
         )}
         
@@ -419,18 +444,11 @@ const PTOManagementApp = () => {
           />
         )}
         
-        {activeTab === 'approvals' && (
-          <ApprovalsPage
-            pendingRequests={pendingRequests}
-            onApproval={handleApproval}
-          />
-        )}
-        
-        {activeTab === 'team' && (
-          <TeamPage
-            teamData={{ teams: userTeams }}
-            requests={ptoRequests}
+        {activeTab === 'manager' && isManager && (
+          <ManagerView
             currentUser={currentUser}
+            isAdmin={isAdmin}
+            showNotification={showNotification}
           />
         )}
 
@@ -443,7 +461,7 @@ const PTOManagementApp = () => {
       </main>
 
       {/* Loading Overlay */}
-      {(requestsLoading) && (
+      {(requestsLoading || appLoading) && (
         <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 flex items-center space-x-3">
             <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
