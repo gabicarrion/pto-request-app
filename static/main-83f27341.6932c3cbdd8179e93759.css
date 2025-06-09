@@ -6007,3 +6007,650 @@ main {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
+
+/* ===== Bulk Import Modal Styles ===== */
+.bulk-import-modal {
+  max-width: 900px;
+  width: 95vw;
+  max-height: 90vh;
+}
+
+.import-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.import-stat-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1.25rem;
+  border: 1px solid #e5e7eb;
+  transition: transform 0.2s;
+}
+
+.import-stat-card:hover {
+  transform: translateY(-1px);
+}
+
+.import-stat-card.stat-blue { border-left: 4px solid #3b82f6; }
+.import-stat-card.stat-orange { border-left: 4px solid #f97316; }
+.import-stat-card.stat-green { border-left: 4px solid #10b981; }
+
+.filters-section {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.filters-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.filters-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.filters-summary {
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
+.search-input-wrapper {
+  position: relative;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #9ca3af;
+}
+
+.search-input {
+  padding-left: 2.5rem;
+}
+
+.form-help-text {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin-top: 0.5rem;
+}
+
+.users-import-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.users-list-header {
+  background: #f9fafb;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.select-all-section {
+  display: flex;
+  align-items: center;
+}
+
+.selection-summary {
+  font-size: 0.875rem;
+  color: #3b82f6;
+  font-weight: 500;
+}
+
+.users-import-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.user-import-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #f3f4f6;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.user-import-item:hover {
+  background: #f9fafb;
+}
+
+.user-import-item.selected {
+  background: #eff6ff;
+  border-left: 4px solid #3b82f6;
+}
+
+.user-import-item:last-child {
+  border-bottom: none;
+}
+
+.user-checkbox {
+  flex-shrink: 0;
+}
+
+.user-status {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+}
+
+.status-active {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #059669;
+  font-weight: 500;
+}
+
+.status-inactive {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.load-more-section {
+  padding: 1rem;
+  text-align: center;
+  border-top: 1px solid #e5e7eb;
+}
+
+.btn-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid transparent;
+  border-top: 2px solid currentColor;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-right: 0.5rem;
+}
+
+/* ===== Admin Management Enhancements ===== */
+.admin-users-card {
+  margin-bottom: 2rem;
+}
+
+.admin-users-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-user-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  transition: transform 0.2s;
+}
+
+.admin-user-item:hover {
+  transform: translateY(-1px);
+  background: #f3f4f6;
+}
+
+.admin-user-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 1;
+}
+
+.admin-user-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.user-role {
+  font-size: 0.875rem;
+  color: #8b5cf6;
+  font-weight: 500;
+}
+
+.section-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.team-color-indicator {
+  width: 4px;
+  height: 3rem;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.action-icon.bg-purple { 
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); 
+}
+
+/* ===== Enhanced Form Styles ===== */
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.checkbox-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* ===== Responsive Enhancements ===== */
+@media (max-width: 768px) {
+  .bulk-import-modal {
+    width: 95vw;
+    max-height: 95vh;
+  }
+  
+  .import-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .filters-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .filters-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  
+  .users-list-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  
+  .user-import-item {
+    padding: 0.75rem 1rem;
+    gap: 0.75rem;
+  }
+  
+  .section-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .section-actions .btn {
+    width: 100%;
+  }
+  
+  .admin-actions-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .users-stats-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .analytics-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .teams-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .users-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .admin-user-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+  
+  .admin-user-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 480px) {
+  .import-stat-card {
+    padding: 1rem;
+  }
+  
+  .stat-value {
+    font-size: 1.5rem;
+  }
+  
+  .modal-body {
+    padding: 1rem;
+  }
+  
+  .modal-header {
+    padding: 1rem;
+  }
+  
+  .users-import-list {
+    max-height: 300px;
+  }
+  
+  .user-import-item {
+    padding: 0.75rem;
+    gap: 0.5rem;
+  }
+  
+  .user-info {
+    min-width: 0;
+  }
+  
+  .user-name {
+    font-size: 0.875rem;
+  }
+  
+  .user-email {
+    font-size: 0.75rem;
+  }
+}
+
+/* ===== Animation Enhancements ===== */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.user-import-item {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.admin-user-item {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.team-card {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* ===== Focus and Accessibility ===== */
+.user-import-item:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.checkbox-label:focus-within {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* ===== Loading States ===== */
+.import-loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.import-loading .user-import-item {
+  cursor: not-allowed;
+}
+
+/* ===== Success States ===== */
+.import-success {
+  background: #dcfce7;
+  border-color: #22c55e;
+}
+
+.import-success .user-checkbox input {
+  accent-color: #22c55e;
+}
+
+/* ===== Enhanced Button States ===== */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary:disabled {
+  background: #9ca3af;
+  border-color: #9ca3af;
+}
+
+.btn-secondary:disabled {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #9ca3af;
+}
+
+/* ===== Enhanced Empty States ===== */
+.empty-state h4 {
+  color: #374151;
+  margin: 1rem 0 0.5rem 0;
+}
+
+.empty-state p {
+  color: #6b7280;
+  margin: 0;
+}
+
+.empty-state-small {
+  padding: 2rem;
+  text-align: center;
+}
+
+.empty-state-small .empty-icon {
+  color: #d1d5db;
+  margin-bottom: 0.75rem;
+}
+
+.empty-state-small p {
+  color: #9ca3af;
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+/* ===== Enhanced Card Hover Effects ===== */
+.import-stat-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.team-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.user-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+/* ===== Enhanced Modal Backdrop ===== */
+.modal-overlay {
+  backdrop-filter: blur(2px);
+  background: rgba(0, 0, 0, 0.6);
+}
+
+/* ===== Enhanced Selection Feedback ===== */
+.user-import-item.selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: #3b82f6;
+}
+
+.user-import-item {
+  position: relative;
+}
+
+/* ===== Enhanced Status Indicators ===== */
+.status-active {
+  background: #dcfce7;
+  color: #166534;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+}
+
+.status-inactive {
+  background: #fee2e2;
+  color: #b91c1c;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+}
+
+/* ===== Enhanced Typography ===== */
+.modal-title {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.section-header h3 {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.card-header h3,
+.card-header h4 {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+/* ===== Enhanced Form Elements ===== */
+.form-control:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.form-control:disabled {
+  background: #f9fafb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+/* ===== Enhanced Spacing ===== */
+.filters-section {
+  margin-bottom: 1.5rem;
+}
+
+.users-import-section {
+  margin-bottom: 1rem;
+}
+
+.admin-actions-card {
+  margin-bottom: 2rem;
+}
+
+.recent-activity-card {
+  margin-bottom: 2rem;
+}
+
+/* ===== Enhanced Border Radius ===== */
+.bulk-import-modal,
+.admin-modal {
+  border-radius: 12px;
+}
+
+.import-stat-card,
+.user-import-item,
+.admin-user-item {
+  border-radius: 8px;
+}
+
+/* ===== Enhanced Color Consistency ===== */
+.stat-blue .stat-icon { color: #3b82f6; }
+.stat-orange .stat-icon { color: #f97316; }
+.stat-green .stat-icon { color: #10b981; }
+.stat-purple .stat-icon { color: #8b5cf6; }
+
+/* ===== Enhanced Grid Layouts ===== */
+.import-stats-grid,
+.users-stats-grid,
+.admin-stats-grid {
+  gap: 1rem;
+}
+
+.analytics-grid {
+  gap: 1.5rem;
+}
+
+.teams-grid,
+.users-grid {
+  gap: 1rem;
+}
+
+/* ===== Print Styles ===== */
+@media print {
+  .modal-overlay,
+  .bulk-import-modal,
+  .admin-modal {
+    display: none !important;
+  }
+}
+
+/* ===== High Contrast Mode ===== */
+@media (prefers-contrast: high) {
+  .user-import-item {
+    border: 2px solid #374151;
+  }
+  
+  .user-import-item.selected {
+    border-color: #1d4ed8;
+    border-width: 3px;
+  }
+  
+  .import-stat-card,
+  .admin-user-item {
+    border-width: 2px;
+  }
+}
+
+/* ===== Reduced Motion ===== */
+@media (prefers-reduced-motion: reduce) {
+  .user-import-item,
+  .admin-user-item,
+  .team-card {
+    animation: none;
+  }
+  
+  .btn-spinner {
+    animation: none;
+  }
+  
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
+

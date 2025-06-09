@@ -1489,16 +1489,38 @@ resolver.define('submitPTOForUser', async (req) => {
         sum + (schedule.type === 'FULL_DAY' ? 8 : 4), 0
       );
     } else {
-      // Calculate based on date range
+      // Calculate based on date range (business days only)
       const start = new Date(requestData.start_date);
       const end = new Date(requestData.end_date);
-      const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-      totalDays = totalDays || daysDiff;
-      totalHours = totalHours || (daysDiff * 8);
+      let businessDays = 0;
+      
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dayOfWeek = d.getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not Sunday or Saturday
+          businessDays++;
+        }
+      }
+      
+      totalDays = totalDays || businessDays;
+      totalHours = totalHours || (businessDays * 8);
     }
     
-    // Get existing requests
-    const requests = await storage.get('pto_requests') || [];
+    // Get existing requests to check for conflicts
+    const existingRequests = await storage.get('pto_requests') || [];
+    
+    // Check for conflicts (only if this is a new request, not an import override)
+    if (!requestData.import_source) {
+      const conflictingRequests = existingRequests.filter(request => 
+        request.requester_id === requestData.requester_id &&
+        request.status !== 'declined' &&
+        !(new Date(requestData.end_date) < new Date(request.start_date) || 
+          new Date(requestData.start_date) > new Date(request.end_date))
+      );
+      
+      if (conflictingRequests.length > 0) {
+        throw new Error('This request conflicts with existing PTO requests for the same dates');
+      }
+    }
     
     // Create new request with admin privileges
     const newRequest = {
@@ -1519,15 +1541,39 @@ resolver.define('submitPTOForUser', async (req) => {
       total_hours: totalHours,
       submitted_at: new Date().toISOString(),
       reviewed_at: new Date().toISOString(),
-      reviewer_comments: 'Created by admin',
+      reviewer_comments: requestData.reviewer_comments || 'Created by admin',
       submitted_by_admin: true,
       admin_id: submittedBy,
-      daily_schedules: requestData.daily_schedules || []
+      daily_schedules: requestData.daily_schedules || [],
+      import_source: requestData.import_source || null,
+      imported_by: requestData.imported_by || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
     
     // Add to storage
-    requests.push(newRequest);
-    await storage.set('pto_requests', requests);
+    existingRequests.push(newRequest);
+    await storage.set('pto_requests', existingRequests);
+    
+    // Create daily schedule records if provided
+    if (requestData.daily_schedules && requestData.daily_schedules.length > 0) {
+      const dailyScheduleRecords = await storage.get('pto_daily_schedules') || [];
+      
+      for (const schedule of requestData.daily_schedules) {
+        const scheduleRecord = {
+          id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          pto_request_id: newRequest.id,
+          date: schedule.date,
+          schedule_type: schedule.type,
+          leave_type: schedule.leaveType,
+          hours: schedule.type === 'FULL_DAY' ? 8 : 4,
+          created_at: new Date().toISOString()
+        };
+        dailyScheduleRecords.push(scheduleRecord);
+      }
+      
+      await storage.set('pto_daily_schedules', dailyScheduleRecords);
+    }
     
     console.log('✅ Admin PTO request created:', newRequest.id);
     
@@ -2256,182 +2302,183 @@ resolver.define('checkPTOImportStatus', async (req) => {
 // Validate PTO Import Data
 resolver.define('validatePTOImportData', async (req) => {
   try {
-    const { 
-      importData, 
-      adminId, 
-      checkJiraUsers = true, 
-      prepareForImport = true, // New flag to fully prepare records for import
-      batchSize = 10, 
-      batchIndex = 0 
-    } = req.payload || {};
-    
-    console.log(`🔍 Validating PTO import data: batch ${batchIndex + 1}, ${importData?.length} records, prepareForImport=${prepareForImport}`);
+    const { csvData, currentUser } = req.payload;
+    console.log(`🔍 Validating ${csvData.length} PTO import records`);
     
     // Verify admin status
     const admins = await storage.get('pto_admins') || [];
-    if (!admins.includes(adminId)) {
+    if (!admins.includes(currentUser.accountId)) {
       throw new Error('Unauthorized: Admin privileges required');
     }
     
-    if (!Array.isArray(importData) || importData.length === 0) {
-      throw new Error('Invalid data format: expected array of PTO records');
-    }
+    const validationResults = [];
     
-    // For large datasets, validate basic format without checking Jira users first
-    const isLargeDataset = importData.length > 20;
-    
-    // First pass: validate basic format without checking Jira users
-    const basicValidation = await importService.validateImportData(importData, false);
-    
-    // If basic validation fails, return those errors immediately
-    if (!basicValidation.valid) {
-      return {
-        success: false,
-        data: { 
-          validation: basicValidation,
-          isComplete: true
-        },
-        message: `Validation failed: ${basicValidation.invalidRecords} records have format errors`
-      };
-    }
-    
-    // If we don't need to check Jira users or if it's a small dataset, we're done
-    if (!checkJiraUsers || (isLargeDataset && batchIndex === 0)) {
-      // For large datasets on first batch, just return the basic validation
-      if (isLargeDataset) {
-        return {
-          success: true,
-          data: {
-            validation: basicValidation,
-            isComplete: false,
-            totalBatches: Math.ceil(basicValidation.validRecords.length / batchSize),
-            currentBatch: 0
-          },
-          message: `Basic validation passed. ${basicValidation.validRecords.length} records have valid format. ${prepareForImport ? 'Preparing data for import...' : ''}`
-        };
-      }
-      
-      // For small datasets, return the full validation
-      return {
-        success: true,
-        data: { 
-          validation: basicValidation,
-          isComplete: true
-        },
-        message: `Validation complete: ${basicValidation.validRecords.length} valid records, ${basicValidation.invalidRecords} invalid records`
-      };
-    }
-    
-    // For large datasets, process in batches
-    // Get the batch to process
-    const validRecords = basicValidation.validRecords;
-    const totalBatches = Math.ceil(validRecords.length / batchSize);
-    const startIndex = batchIndex * batchSize;
-    const endIndex = Math.min(startIndex + batchSize, validRecords.length);
-    const currentBatch = validRecords.slice(startIndex, endIndex);
-    
-    console.log(`Processing batch ${batchIndex + 1} of ${totalBatches}: records ${startIndex + 1}-${endIndex}`);
-    
-    // Validate this batch with Jira user checks and prepare for import if requested
-    const batchValidation = await importService.validateImportData(currentBatch, true, prepareForImport);
-    
-    // Get previous validation results from storage if this isn't the first batch
-    let combinedValidation;
-    if (batchIndex > 0) {
-      const previousValidation = await storage.get(`pto_import_validation_${adminId}`) || {
-        valid: true,
-        totalRecords: validRecords.length,
-        validRecords: [],
-        invalidRecords: 0,
+    for (let i = 0; i < csvData.length; i++) {
+      const row = csvData[i];
+      const result = {
+        rowNumber: i + 1,
+        original: row,
+        validated: null,
         errors: [],
-        preparedForImport: prepareForImport
+        warnings: [],
+        status: 'pending'
       };
       
-      // Combine the results
-      combinedValidation = {
-        valid: previousValidation.valid && batchValidation.valid,
-        totalRecords: validRecords.length,
-        validRecords: [...previousValidation.validRecords, ...batchValidation.validRecords],
-        invalidRecords: previousValidation.invalidRecords + batchValidation.invalidRecords,
-        errors: [...previousValidation.errors, ...batchValidation.errors],
-        userCache: { ...(previousValidation.userCache || {}), ...(batchValidation.userCache || {}) },
-        preparedForImport: prepareForImport
-      };
-    } else {
-      combinedValidation = batchValidation;
-      combinedValidation.totalRecords = validRecords.length;
-      combinedValidation.preparedForImport = prepareForImport;
-    }
-    
-    // Store the combined validation for the next batch
-    await storage.set(`pto_import_validation_${adminId}`, combinedValidation);
-    
-    // Check if this is the last batch
-    const isComplete = endIndex >= validRecords.length;
-    
-          // If this is the last batch, we can clear the stored validation
-      if (isComplete) {
-        // Instead of deleting, keep the validation results for import
-        // We'll delete it after import is complete
-        if (!prepareForImport) {
-          await storage.delete(`pto_import_validation_${adminId}`);
-        }
+      // Validate required fields
+      const requiredFields = ['employee_email', 'start_date', 'end_date', 'leave_type'];
+      const missingFields = requiredFields.filter(field => !row[field]);
+      
+      if (missingFields.length > 0) {
+        result.errors.push(`Missing required fields: ${missingFields.join(', ')}`);
       }
-    
-    // Extract user check results for display
-    const userCheckResults = [];
-    
-    // Show sample results from this batch
-    if (batchValidation.userCache) {
-      const sampleSize = Math.min(3, batchValidation.validRecords.length);
       
-      for (let i = 0; i < sampleSize; i++) {
-        if (i < batchValidation.validRecords.length) {
-          const record = batchValidation.validRecords[i];
-          
-          userCheckResults.push({
-            record: startIndex + i + 1,
-            requester: {
-              email: record.requester_email,
-              found: !!record.requester_id,
-              details: record.requester_id ? {
-                accountId: record.requester_id,
-                displayName: record.requester_name
-              } : null
-            },
-            manager: {
-              email: record.manager_email,
-              found: !!record.manager_id,
-              details: record.manager_id ? {
-                accountId: record.manager_id,
-                displayName: record.manager_name
-              } : null
+      // Validate dates
+      const startDate = new Date(row.start_date);
+      const endDate = new Date(row.end_date);
+      
+      if (isNaN(startDate.getTime())) {
+        result.errors.push('Invalid start_date format');
+      }
+      
+      if (isNaN(endDate.getTime())) {
+        result.errors.push('Invalid end_date format');
+      }
+      
+      if (startDate > endDate) {
+        result.errors.push('Start date cannot be after end date');
+      }
+      
+      // Validate leave type
+      const validLeaveTypes = ['vacation', 'sick', 'personal', 'holiday'];
+      if (!validLeaveTypes.includes(row.leave_type?.toLowerCase())) {
+        result.errors.push(`Invalid leave_type. Must be one of: ${validLeaveTypes.join(', ')}`);
+      }
+      
+      // Try to find user (this would need to be enhanced based on your user search capabilities)
+      let userFound = false;
+      if (row.employee_email) {
+        try {
+          const userResponse = await invoke('getJiraUsers', { query: row.employee_email });
+          if (userResponse.success && userResponse.data.length > 0) {
+            const user = userResponse.data.find(u => 
+              u.emailAddress?.toLowerCase() === row.employee_email.toLowerCase()
+            );
+            if (user) {
+              userFound = true;
+              result.validated = {
+                requester_id: user.accountId,
+                requester_name: user.displayName,
+                requester_email: user.emailAddress,
+                requester_avatar: user.avatarUrl,
+                manager_id: 'admin',
+                manager_name: 'System Admin',
+                manager_email: 'admin@system.com',
+                start_date: startDate.toISOString().split('T')[0],
+                end_date: endDate.toISOString().split('T')[0],
+                leave_type: row.leave_type.toLowerCase(),
+                reason: row.reason || 'Imported from CSV',
+                status: 'approved',
+                import_source: 'csv_import',
+                imported_by: currentUser.accountId
+              };
             }
-          });
+          }
+        } catch (error) {
+          console.warn('Error searching for user:', error);
         }
       }
+      
+      if (!userFound) {
+        result.errors.push(`User not found: ${row.employee_email}`);
+      }
+      
+      // Set final status
+      if (result.errors.length === 0) {
+        result.status = 'valid';
+      } else {
+        result.status = 'invalid';
+      }
+      
+      validationResults.push(result);
     }
+    
+    const validCount = validationResults.filter(r => r.status === 'valid').length;
+    const invalidCount = validationResults.filter(r => r.status === 'invalid').length;
+    
+    console.log(`✅ Validation complete: ${validCount} valid, ${invalidCount} invalid`);
     
     return {
-      success: combinedValidation.valid,
-      data: { 
-        validation: combinedValidation,
-        batchValidation,
-        userCheckResults: userCheckResults.length > 0 ? userCheckResults : undefined,
-        isComplete,
-        totalBatches,
-        currentBatch: batchIndex + 1
-      },
-      message: isComplete 
-        ? `Validation complete: ${combinedValidation.validRecords.length} valid records, ${combinedValidation.invalidRecords} invalid records` 
-        : `Batch ${batchIndex + 1}/${totalBatches} validated: ${combinedValidation.validRecords.length}/${validRecords.length} records processed`
+      success: true,
+      data: {
+        results: validationResults,
+        summary: {
+          total: csvData.length,
+          valid: validCount,
+          invalid: invalidCount
+        }
+      }
     };
   } catch (error) {
-    console.error('❌ Error validating PTO import data:', error);
+    console.error('❌ Error validating import data:', error);
     return {
       success: false,
-      message: error.message || 'Failed to validate PTO import data',
-      error: error.toString()
+      message: error.message
+    };
+  }
+});
+
+// Bulk import resolver
+resolver.define('bulkImportPTORequests', async (req) => {
+  try {
+    const { validatedData, currentUser } = req.payload;
+    console.log(`📥 Bulk importing ${validatedData.length} PTO requests`);
+    
+    // Verify admin status
+    const admins = await storage.get('pto_admins') || [];
+    if (!admins.includes(currentUser.accountId)) {
+      throw new Error('Unauthorized: Admin privileges required');
+    }
+    
+    const results = {
+      total: validatedData.length,
+      successful: 0,
+      failed: 0,
+      errors: []
+    };
+    
+    for (let i = 0; i < validatedData.length; i++) {
+      const record = validatedData[i];
+      
+      try {
+        const response = await invoke('submitPTOForUser', {
+          requestData: record,
+          submittedBy: currentUser.accountId
+        });
+        
+        if (response.success) {
+          results.successful++;
+        } else {
+          results.failed++;
+          results.errors.push(`Record ${i + 1}: ${response.message}`);
+        }
+      } catch (error) {
+        results.failed++;
+        results.errors.push(`Record ${i + 1}: ${error.message}`);
+      }
+    }
+    
+    console.log(`✅ Bulk import complete: ${results.successful} successful, ${results.failed} failed`);
+    
+    return {
+      success: true,
+      data: results,
+      message: `Import complete: ${results.successful} successful, ${results.failed} failed`
+    };
+  } catch (error) {
+    console.error('❌ Error bulk importing PTO requests:', error);
+    return {
+      success: false,
+      message: error.message
     };
   }
 });
