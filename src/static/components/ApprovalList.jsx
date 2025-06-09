@@ -47,14 +47,13 @@ const ApprovalList = ({ currentUser, showNotification }) => {
     }
   };
 
-  const handleApproval = async (requestId, status, comment = '') => {
+  const handleApproval = async (requestId, status) => {
     setProcessing(prev => ({ ...prev, [requestId]: true }));
     
     try {
       const response = await invoke('updatePTORequest', {
         requestId,
-        status,
-        comment
+        status
       });
 
       if (response.success) {
@@ -64,7 +63,7 @@ const ApprovalList = ({ currentUser, showNotification }) => {
         showNotification(response.message, 'error');
       }
     } catch (error) {
-      showNotification(`Failed to ${status.toLowerCase()} request`, 'error');
+      showNotification('Failed to process request', 'error');
     } finally {
       setProcessing(prev => ({ ...prev, [requestId]: false }));
     }
@@ -123,29 +122,17 @@ const ApprovalList = ({ currentUser, showNotification }) => {
             </div>
 
             <div className="request-actions">
-              <textarea
-                placeholder="Add a comment (optional)"
-                className="comment-input"
-                id={`comment-${request.id}`}
-                rows="2"
-              />
               <div className="action-buttons">
                 <button
                   className="approve-btn"
-                  onClick={() => {
-                    const comment = document.getElementById(`comment-${request.id}`).value;
-                    handleApproval(request.id, 'approved', comment);
-                  }}
+                  onClick={() => handleApproval(request.id, 'approved')}
                   disabled={processing[request.id]}
                 >
                   {processing[request.id] ? '...' : '✅ Approve'}
                 </button>
                 <button
                   className="decline-btn"
-                  onClick={() => {
-                    const comment = document.getElementById(`comment-${request.id}`).value;
-                    handleApproval(request.id, 'declined', comment);
-                  }}
+                  onClick={() => handleApproval(request.id, 'declined')}
                   disabled={processing[request.id]}
                 >
                   {processing[request.id] ? '...' : '❌ Decline'}

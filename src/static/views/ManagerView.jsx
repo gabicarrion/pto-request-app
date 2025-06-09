@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge';
 import { getLeaveTypeEmoji } from '../components/leaveTypeUtils';
+import DateRangeFilter from '../components/DateRangeFilter';
 
 const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
   const [selectedTeam, setSelectedTeam] = useState(null);
@@ -16,8 +17,9 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
   const [pendingRequests, setPendingRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [processingApproval, setProcessingApproval] = useState({});
-  const [comments, setComments] = useState({});
   const [showFilters, setShowFilters] = useState(false);
+  const [dateRange, setDateRange] = useState({ preset: 'current_month', from: '', to: '' });
+
 
   useEffect(() => {
     loadManagerData();
@@ -81,20 +83,17 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
   };
 
   const handleApproval = async (requestId, status) => {
-    const comment = comments[requestId] || '';
     setProcessingApproval(prev => ({ ...prev, [requestId]: true }));
 
     try {
       const response = await invoke('updatePTORequest', {
         requestId,
-        status,
-        comment
+        status
       });
 
       if (response.success) {
         showNotification(`Request ${status.toLowerCase()} successfully`);
         setPendingRequests(prev => prev.filter(req => req.id !== requestId));
-        setComments(prev => ({ ...prev, [requestId]: '' }));
         loadTeamRequests(); // Refresh team data
       } else {
         showNotification(response.message || `Failed to ${status.toLowerCase()} request`, 'error');
@@ -121,7 +120,6 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
         'Period': `${request.total_days} days`,
         'Leave Type': request.leave_type,
         'Reason': request.reason || '',
-        'Manager Comment': request.reviewer_comments || '',
         'Status': request.status
       }));
 
@@ -280,18 +278,8 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
               </option>
             ))}
           </select>
-          
-          <select
-            value={selectedTimeRange}
-            onChange={(e) => setSelectedTimeRange(e.target.value)}
-            className="form-control"
-          >
-            <option value="current_month">This Month</option>
-            <option value="next_month">Next Month</option>
-            <option value="next_3_months">Next 3 Months</option>
-            <option value="current_year">This Year</option>
-            <option value="all">All Time</option>
-          </select>
+
+          <DateRangeFilter value={dateRange} onChange={setDateRange} />
         </div>
       </div>
 
@@ -360,13 +348,6 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
                   </div>
                   
                   <div className="request-actions-inline">
-                    <textarea
-                      placeholder="Add comment (optional)"
-                      value={comments[request.id] || ''}
-                      onChange={(e) => setComments(prev => ({ ...prev, [request.id]: e.target.value }))}
-                      className="comment-input-small"
-                      rows="2"
-                    />
                     <div className="action-buttons-inline">
                       <button
                         onClick={() => handleApproval(request.id, 'approved')}
@@ -399,6 +380,124 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
       )}
 
       <div className="manager-content-grid">
+        {/* Team Requests Section */}
+        <div className="card team-requests-card">
+          <div className="card-header">
+            <h3>Team Requests</h3>
+            <div className="team-requests-controls">
+              <select
+                value={selectedMember}
+                onChange={(e) => setSelectedMember(e.target.value)}
+                className="form-control"
+              >
+                <option value="all">All Members</option>
+                {teams.map(team => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
+                  </option>
+                ))}
+              </select>
+              
+              <div className="action-buttons-group">
+                <button onClick={handleGenerateReport} className="btn btn-primary">
+                  <Download size={16} />
+                  Generate Report
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <div className="card-body">
+            {filteredTeamRequests.length === 0 ? (
+              <div className="empty-state">
+                <Users size={48} />
+                <h4>No Requests Found</h4>
+                <p>No PTO requests found for the selected criteria.</p>
+              </div>
+            ) : (
+              <div className="team-requests-list">
+                {filteredTeamRequests.map(request => (
+                  <div key={request.id} className="team-request-item">
+                    <div className="request-header-row">
+                      <div className="request-user-info">
+                        <div className="user-avatar">
+                          {request.requester_name?.charAt(0) || '?'}
+                        </div>
+                        <div className="user-details">
+                          <div className="user-name">{request.requester_name}</div>
+                          <div className="request-type">
+                            {getLeaveTypeEmoji(request.leave_type)} {request.leave_type}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="request-details-summary">
+                        <div className="date-range">
+                          {formatDate(request.start_date)} - {formatDate(request.end_date)}
+                        </div>
+                        <div className="duration">{request.total_days} days</div>
+                      </div>
+                      
+                      <div className="request-status-section">
+                        <StatusBadge status={request.status} />
+                        <div className="submitted-date">
+                          {formatDateTime(request.submitted_at)}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {request.reason && (
+                      <div className="request-reason-row">
+                        <span className="reason-label">Reason:</span>
+                        <span className="reason-text">{request.reason}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Upcoming PTO */}
+        <div className="card upcoming-pto-card">
+          <div className="card-header">
+            <h3>Upcoming PTO</h3>
+          </div>
+          <div className="card-body">
+            {upcomingPTO.length === 0 ? (
+              <div className="empty-state-small">
+                <Calendar size={32} />
+                <p>No upcoming PTO scheduled</p>
+              </div>
+            ) : (
+              <div className="upcoming-pto-list">
+                {upcomingPTO.map(request => (
+                  <div key={request.id} className="upcoming-pto-item">
+                    <div className="pto-user">
+                      <div className="user-avatar-small">
+                        {request.requester_name?.charAt(0) || '?'}
+                      </div>
+                      <div className="user-info-small">
+                        <div className="user-name-small">{request.requester_name}</div>
+                        <div className="pto-type-small">
+                          {getLeaveTypeEmoji(request.leave_type)} {request.leave_type}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="pto-dates-small">
+                      <div className="date-range-small">
+                        {formatDate(request.start_date)} - {formatDate(request.end_date)}
+                      </div>
+                      <div className="duration-small">{request.total_days} days</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Analytics Section */}
         <div className="card analytics-card">
           <div className="card-header">
@@ -465,135 +564,9 @@ const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
           </div>
         </div>
 
-        {/* Upcoming PTO */}
-        <div className="card upcoming-pto-card">
-          <div className="card-header">
-            <h3>Upcoming PTO</h3>
-          </div>
-          <div className="card-body">
-            {upcomingPTO.length === 0 ? (
-              <div className="empty-state-small">
-                <Calendar size={32} />
-                <p>No upcoming PTO scheduled</p>
-              </div>
-            ) : (
-              <div className="upcoming-pto-list">
-                {upcomingPTO.map(request => (
-                  <div key={request.id} className="upcoming-pto-item">
-                    <div className="pto-user">
-                      <div className="user-avatar-small">
-                        {request.requester_name?.charAt(0) || '?'}
-                      </div>
-                      <div className="user-info-small">
-                        <div className="user-name-small">{request.requester_name}</div>
-                        <div className="pto-type-small">
-                          {getLeaveTypeEmoji(request.leave_type)} {request.leave_type}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="pto-dates-small">
-                      <div className="date-range-small">
-                        {formatDate(request.start_date)} - {formatDate(request.end_date)}
-                      </div>
-                      <div className="duration-small">{request.total_days} days</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
-      {/* Team Requests Section */}
-      <div className="card team-requests-card">
-        <div className="card-header">
-          <h3>Team Requests</h3>
-          <div className="team-requests-controls">
-            <select
-              value={selectedMember}
-              onChange={(e) => setSelectedMember(e.target.value)}
-              className="form-control"
-            >
-              <option value="all">All Members</option>
-              {selectedTeam?.members?.map(member => (
-                <option key={member.id} value={member.jira_account_id || member.id}>
-                  {member.display_name || member.displayName}
-                </option>
-              ))}
-            </select>
-            
-            <div className="action-buttons-group">
-              <button onClick={handleViewTeamCalendar} className="btn btn-secondary">
-                <Eye size={16} />
-                View Calendar
-              </button>
-              <button onClick={handleGenerateReport} className="btn btn-primary">
-                <Download size={16} />
-                Generate Report
-              </button>
-            </div>
-          </div>
-        </div>
-        
-        <div className="card-body">
-          {filteredTeamRequests.length === 0 ? (
-            <div className="empty-state">
-              <Users size={48} />
-              <h4>No Requests Found</h4>
-              <p>No PTO requests found for the selected criteria.</p>
-            </div>
-          ) : (
-            <div className="team-requests-list">
-              {filteredTeamRequests.map(request => (
-                <div key={request.id} className="team-request-item">
-                  <div className="request-header-row">
-                    <div className="request-user-info">
-                      <div className="user-avatar">
-                        {request.requester_name?.charAt(0) || '?'}
-                      </div>
-                      <div className="user-details">
-                        <div className="user-name">{request.requester_name}</div>
-                        <div className="request-type">
-                          {getLeaveTypeEmoji(request.leave_type)} {request.leave_type}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="request-details-summary">
-                      <div className="date-range">
-                        {formatDate(request.start_date)} - {formatDate(request.end_date)}
-                      </div>
-                      <div className="duration">{request.total_days} days</div>
-                    </div>
-                    
-                    <div className="request-status-section">
-                      <StatusBadge status={request.status} />
-                      <div className="submitted-date">
-                        {formatDateTime(request.submitted_at)}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {request.reason && (
-                    <div className="request-reason-row">
-                      <span className="reason-label">Reason:</span>
-                      <span className="reason-text">{request.reason}</span>
-                    </div>
-                  )}
-                  
-                  {request.reviewer_comments && (
-                    <div className="request-comments-row">
-                      <span className="comments-label">Manager Comments:</span>
-                      <span className="comments-text">{request.reviewer_comments}</span>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+
     </div>
   );
 };

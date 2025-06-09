@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Filter, X, Calendar, Users, User } from 'lucide-react';
 import PTOSubmissionModal from '../components/PTOSubmissionModal';
 import { getLeaveTypeEmoji } from '../components/leaveTypeUtils';
+import EditPTOModal from '../components/EditPTOModal';
 
 const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, currentUser, allUsers, allTeams, isAdmin }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -13,6 +14,8 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
     status: 'all'
   });
   const [showFilters, setShowFilters] = useState(false);
+  const [editingRequest, setEditingRequest] = useState(null);
+  const [infoMessage, setInfoMessage] = useState('');
 
   // Find current user in the users database
   const currentUserData = allUsers?.find(user => 
@@ -153,13 +156,55 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
     );
   };
 
+  // Helper: can the request be edited?
+  const canEditRequest = (request) => {
+    if (!request) return false;
+    if (request.requester_id !== currentUser.accountId) return false;
+    if (request.status === 'pending') return true;
+    if (request.status === 'approved') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const startDate = new Date(request.start_date);
+      return startDate >= today;
+    }
+    return false;
+  };
+
+  // Updated day click handler
+  const handleDayClick = (day) => {
+    const dateStr = formatDate(day);
+    // Find a request for the current user on this day
+    const userRequests = events.filter(event =>
+      (event.requester_id === currentUser.accountId || event.requester_email === currentUser.emailAddress) &&
+      dateStr >= event.start_date && dateStr <= event.end_date
+    );
+    const editableRequest = userRequests.find(canEditRequest);
+    if (editableRequest) {
+      setEditingRequest(editableRequest);
+      return;
+    }
+    if (userRequests.length > 0) {
+      setInfoMessage('You already have a PTO request this day and it is not editable.');
+      return;
+    }
+    // Otherwise, proceed with normal selection
+    if (!day || day < new Date(new Date().setHours(0, 0, 0, 0))) return;
+    onDateSelect(day);
+  };
+
   const days = getDaysInMonth(currentDate);
   const monthNames = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December"
   ];
 
-  const leaveTypes = ['vacation', 'sick', 'personal', 'holiday'];
+  const leaveTypes = [
+    'vacation', 
+    'sick', 
+    'personal', 
+    'holiday',
+    'other leave type'
+  ];
   const statusTypes = ['pending', 'approved', 'declined'];
 
   return (
@@ -305,7 +350,7 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
             return (
               <div
                 key={day.toISOString()}
-                onClick={() => !isPastDate && onDateSelect(day)}
+                onClick={() => handleDayClick(day)}
                 className={
                   "calendar-day" +
                   (isPastDate ? " calendar-day-past" : " calendar-day-active") +
@@ -384,6 +429,29 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
           allRequests={events}
           isAdmin={isAdmin}
         />
+      )}
+
+      {/* EditPTOModal */}
+      {editingRequest && (
+        <EditPTOModal
+          request={editingRequest}
+          onClose={() => setEditingRequest(null)}
+          onSave={() => { setEditingRequest(null); }}
+          currentUser={currentUser}
+        />
+      )}
+
+      {/* Info Message Modal/Alert */}
+      {infoMessage && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: 400, margin: 'auto', padding: 24, textAlign: 'center' }}>
+            <div style={{ marginBottom: 16 }}>
+              <span role="img" aria-label="info" style={{ fontSize: 32 }}>ℹ️</span>
+            </div>
+            <div style={{ marginBottom: 16 }}>{infoMessage}</div>
+            <button className="btn btn-primary" onClick={() => setInfoMessage('')}>OK</button>
+          </div>
+        </div>
       )}
     </div>
   );

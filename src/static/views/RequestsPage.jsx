@@ -2,11 +2,17 @@ import React, { useState, useMemo } from 'react';
 import { Calendar, Clock, Eye, Edit, Trash2, TrendingUp, BarChart3, Filter } from 'lucide-react';
 import StatusBadge from '../components/StatusBadge';
 import { getLeaveTypeEmoji, getLeaveTypeColor } from '../components/leaveTypeUtils';
+import DateRangeFilter from '../components/DateRangeFilter';
+import EditPTOModal from '../components/EditPTOModal';
+
 
 const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest }) => {
   const [dateFilter, setDateFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [dateRange, setDateRange] = useState({ preset: 'all', from: '', to: '' });
+  const [editingRequest, setEditingRequest] = useState(null);
+
 
   const formatDate = (dateString) =>
     new Date(dateString).toLocaleDateString('en-US', {
@@ -20,7 +26,20 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
 
   // Check if request can be edited/cancelled
   const canEditRequest = (request) => {
-    return request.status === 'pending' && request.requester_id === currentUser.accountId;
+    if (request.requester_id !== currentUser.accountId) return false;
+    
+    // Can always edit pending requests
+    if (request.status === 'pending') return true;
+    
+    // For approved requests, can only edit if no past dates
+    if (request.status === 'approved') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const startDate = new Date(request.start_date);
+      return startDate >= today;
+    }
+    
+    return false;
   };
 
   const canCancelRequest = (request) => {
@@ -38,53 +57,74 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
     return request.status === 'pending';
   };
 
+  const handleEditRequest = (request) => {
+    if (canEditRequest(request)) {
+      setEditingRequest(request);
+    }
+  };
+
+  const handleSaveEdit = (updatedRequest) => {
+    onEditRequest(updatedRequest);
+    setEditingRequest(null);
+  };
+
   // Filter requests based on selected filters
   const filteredRequests = useMemo(() => {
-    let filtered = [...requests];
+    let filtered = Array.isArray(requests) ? [...requests] : [];
 
     // Date filter
-    if (dateFilter !== 'all') {
+    if (dateRange && dateRange.preset !== 'all') {
+      let startDate, endDate;
       const now = new Date();
-      const startDate = new Date();
-      
-      switch (dateFilter) {
+      switch (dateRange.preset) {
         case 'current_year':
-          startDate.setMonth(0, 1);
-          startDate.setHours(0, 0, 0, 0);
-          break;
-        case 'last_30_days':
-          startDate.setDate(now.getDate() - 30);
+          startDate = new Date(now.getFullYear(), 0, 1);
           break;
         case 'last_90_days':
+          startDate = new Date(now);
           startDate.setDate(now.getDate() - 90);
           break;
+        case 'last_30_days':
+          startDate = new Date(now);
+          startDate.setDate(now.getDate() - 30);
+          break;
+        case 'custom':
+          startDate = dateRange.from ? new Date(dateRange.from) : null;
+          endDate = dateRange.to ? new Date(dateRange.to) : null;
+          break;
+        default:
+          startDate = null;
       }
-      
-      filtered = filtered.filter(request => 
-        new Date(request.submitted_at) >= startDate
-      );
+      filtered = filtered.filter(request => {
+        const submitted = new Date(request.submitted_at);
+        if (dateRange.preset === 'custom') {
+          if (startDate && submitted < startDate) return false;
+          if (endDate && submitted > endDate) return false;
+          return true;
+        }
+        return !startDate || submitted >= startDate;
+      });
     }
 
     // Status filter
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(request => request.status === statusFilter);
+    if (statusFilter && statusFilter !== 'all') {
+      filtered = filtered.filter(r => r.status === statusFilter);
     }
 
-    return filtered.sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
-  }, [requests, dateFilter, statusFilter]);
-
+    return filtered;
+  }, [requests, dateRange, statusFilter]);
   // Calculate statistics
   const stats = useMemo(() => {
-    const totalRequests = filteredRequests.length;
-    const pendingRequests = filteredRequests.filter(r => r.status === 'pending').length;
-    const approvedRequests = filteredRequests.filter(r => r.status === 'approved').length;
-    const declinedRequests = filteredRequests.filter(r => r.status === 'declined').length;
-    const totalDays = filteredRequests
+    const safeRequests = Array.isArray(filteredRequests) ? filteredRequests : [];
+    const totalRequests = safeRequests.length;
+    const pendingRequests = safeRequests.filter(r => r.status === 'pending').length;
+    const approvedRequests = safeRequests.filter(r => r.status === 'approved').length;
+    const declinedRequests = safeRequests.filter(r => r.status === 'declined').length;
+    const totalDays = safeRequests
       .filter(r => r.status === 'approved')
       .reduce((sum, r) => sum + (r.total_days || 0), 0);
 
-    // PTO by leave type - FIXED
-    const ptoByType = filteredRequests
+    const ptoByType = safeRequests
       .filter(r => r.status === 'approved')
       .reduce((acc, request) => {
         const type = request.leave_type || 'unknown';
@@ -140,16 +180,7 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
             <div className="filters-row">
               <div className="filter-group">
                 <label>Date Range</label>
-                <select
-                  value={dateFilter}
-                  onChange={(e) => setDateFilter(e.target.value)}
-                  className="form-control"
-                >
-                  <option value="all">All Time</option>
-                  <option value="current_year">Current Year</option>
-                  <option value="last_90_days">Last 90 Days</option>
-                  <option value="last_30_days">Last 30 Days</option>
-                </select>
+                <DateRangeFilter value={dateRange} onChange={setDateRange} />
               </div>
               
               <div className="filter-group">
@@ -225,14 +256,14 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
 
       <div className="requests-content">
         {/* PTO Breakdown by Leave Type - FIXED */}
-        {Object.keys(stats.ptoByType).length > 0 && (
+        {Object.keys(stats.ptoByType || {}).length > 0 && (
           <div className="card pto-breakdown-card">
             <div className="card-header">
               <h3>PTO Breakdown by Leave Type</h3>
             </div>
             <div className="card-body">
               <div className="pto-breakdown-grid">
-                {Object.entries(stats.ptoByType).map(([type, days]) => (
+                {Object.entries(stats.ptoByType || {}).map(([type, days]) => (
                   <div key={type} className="pto-breakdown-item">
                     <div className="breakdown-icon">
                       {getLeaveTypeEmoji(type)}
@@ -246,7 +277,7 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
                       </div>
                     </div>
                     <div className="breakdown-percentage">
-                      {((days / stats.totalDays) * 100).toFixed(1)}%
+                      {stats.totalDays > 0 ? ((days / stats.totalDays) * 100).toFixed(1) : '0.0'}%
                     </div>
                   </div>
                 ))}
@@ -299,7 +330,7 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
                       <div className="request-actions">
                         {canEditRequest(request) && (
                           <button
-                            onClick={() => onEditRequest && onEditRequest(request)}
+                            onClick={() => handleEditRequest(request)}
                             className="btn btn-sm btn-secondary"
                             title="Edit Request"
                           >
@@ -342,13 +373,6 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
                       )}
                     </div>
 
-                    {/* Manager Comments */}
-                    {request.status !== 'pending' && request.reviewer_comments && (
-                      <div className="request-comments compact">
-                        <div className="comments-header">Manager Comments:</div>
-                        <div className="comments-text">{request.reviewer_comments}</div>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -356,6 +380,16 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
           </div>
         </div>
       </div>
+
+      {/* Add EditPTOModal */}
+      {editingRequest && (
+        <EditPTOModal
+          request={editingRequest}
+          onClose={() => setEditingRequest(null)}
+          onSave={handleSaveEdit}
+          currentUser={currentUser}
+        />
+      )}
     </div>
   );
 };

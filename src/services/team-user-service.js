@@ -21,6 +21,7 @@ export class TeamUserService {
         }
       }
       
+      await this.migrateUserTeamMemberships();
       return {
         success: true,
         message: 'TeamUserService initialized successfully'
@@ -131,8 +132,12 @@ export class TeamUserService {
       // Remove team members associations
       const users = await storage.get(this.USERS_KEY) || [];
       const updatedUsers = users.map(user => {
-        if (user.team_id === teamId) {
-          return { ...user, team_id: null, updated_at: new Date().toISOString() };
+        if ((user.team_memberships || []).some(m => m.team_id === teamId)) {
+          return {
+            ...user,
+            team_memberships: user.team_memberships.filter(m => m.team_id !== teamId),
+            updated_at: new Date().toISOString()
+          };
         }
         return user;
       });
@@ -164,7 +169,7 @@ export class TeamUserService {
       // Enrich teams with member information
       const enrichedTeams = teams.map(team => ({
         ...team,
-        members: users.filter(user => user.team_id === team.id)
+        members: users.filter(user => (user.team_memberships || []).some(m => m.team_id === team.id))
       }));
 
       return {
@@ -184,7 +189,14 @@ export class TeamUserService {
   async createUser(userData) {
     try {
       const users = await storage.get(this.USERS_KEY) || [];
-      
+      let teamMemberships = userData.team_memberships || userData.teamMemberships || [];
+      if (!Array.isArray(teamMemberships)) {
+        if (userData.team_id || userData.teamId) {
+          teamMemberships = [{ team_id: userData.team_id || userData.teamId, role: 'Member' }];
+        } else {
+          teamMemberships = [];
+        }
+      }
       const newUser = {
         id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         first_name: userData?.first_name || userData?.firstName || '',
@@ -194,19 +206,18 @@ export class TeamUserService {
         jira_account_id: userData?.jira_account_id || userData?.jiraAccountId || '',
         employment_type: userData?.employment_type || userData?.employmentType || 'full-time',
         hire_date: userData?.hire_date || userData?.hireDate || '',
-        team_id: userData?.team_id || userData?.teamId || null,
+        team_memberships: teamMemberships,
         capacity: userData?.capacity || 40,
         availability: userData?.availability || this.getDefaultAvailability(),
         avatar_url: userData?.avatar_url || userData?.avatarUrl || '',
         status: userData?.status || 'active',
+        isAdmin: userData?.isAdmin === true,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         created_by: userData?.createdBy || null
       };
-
       users.push(newUser);
       await storage.set(this.USERS_KEY, users);
-
       console.log('✅ User created:', newUser.display_name);
       return {
         success: true,
@@ -227,14 +238,17 @@ export class TeamUserService {
       if (!userData?.id) {
         throw new Error('User ID is required for update');
       }
-
       const users = await storage.get(this.USERS_KEY) || [];
       const userIndex = users.findIndex(user => user.id === userData.id);
-
       if (userIndex === -1) {
         throw new Error('User not found');
       }
-
+      let teamMemberships = userData.team_memberships || userData.teamMemberships || users[userIndex].team_memberships || [];
+      if (!Array.isArray(teamMemberships)) {
+        if (userData.team_id || userData.teamId) {
+          teamMemberships = [{ team_id: userData.team_id || userData.teamId, role: 'Member' }];
+        }
+      }
       users[userIndex] = {
         ...users[userIndex],
         first_name: userData.first_name || userData.firstName || users[userIndex].first_name,
@@ -244,17 +258,16 @@ export class TeamUserService {
         jira_account_id: userData.jira_account_id || userData.jiraAccountId || users[userIndex].jira_account_id,
         employment_type: userData.employment_type || userData.employmentType || users[userIndex].employment_type,
         hire_date: userData.hire_date || userData.hireDate || users[userIndex].hire_date,
-        team_id: userData.team_id || userData.teamId || users[userIndex].team_id,
+        team_memberships: teamMemberships,
         capacity: userData.capacity || users[userIndex].capacity,
         availability: userData.availability || users[userIndex].availability,
         avatar_url: userData.avatar_url || userData.avatarUrl || users[userIndex].avatar_url,
         status: userData.status || users[userIndex].status,
+        isAdmin: userData.isAdmin !== undefined ? userData.isAdmin : users[userIndex].isAdmin === true,
         updated_at: new Date().toISOString(),
         updated_by: userData.updatedBy || null
       };
-
       await storage.set(this.USERS_KEY, users);
-
       console.log('✅ User updated:', users[userIndex].display_name);
       return {
         success: true,
@@ -351,7 +364,7 @@ export class TeamUserService {
       }
 
       const users = await storage.get(this.USERS_KEY) || [];
-      const teamUsers = users.filter(user => user.team_id === teamId);
+      const teamUsers = users.filter(user => (user.team_memberships || []).some(m => m.team_id === teamId));
       
       return {
         success: true,
@@ -373,27 +386,57 @@ export class TeamUserService {
         throw new Error('Team ID and member data are required');
       }
 
+      // Validate manager role if being assigned
+      if (memberData.role === 'Manager') {
+        const canBeManager = await this.validateTeamManager(teamId, memberData.id, 'Manager');
+        if (!canBeManager) {
+          throw new Error('Team already has a manager');
+        }
+      }
+
       const teams = await storage.get(this.TEAMS_KEY) || [];
       const users = await storage.get(this.USERS_KEY) || [];
-      
       const teamIndex = teams.findIndex(team => team.id === teamId);
+      
       if (teamIndex === -1) {
         throw new Error('Team not found');
       }
 
-      // Create or update user
       let user;
       const existingUserIndex = users.findIndex(u => 
         u.jira_account_id === memberData.jira_account_id || 
         u.jira_account_id === memberData.accountId
       );
-      
+
       if (existingUserIndex !== -1) {
         // Update existing user
+        const prevTeamMemberships = users[existingUserIndex].team_memberships || [];
+        const existingMembership = prevTeamMemberships.find(m => m.team_id === teamId);
+        
+        if (existingMembership) {
+          // Update existing membership
+          if (memberData.role === 'Manager') {
+            const canBeManager = await this.validateTeamManager(teamId, users[existingUserIndex].id, 'Manager');
+            if (!canBeManager) {
+              throw new Error('Team already has a manager');
+            }
+          }
+          prevTeamMemberships[prevTeamMemberships.indexOf(existingMembership)] = {
+            team_id: teamId,
+            role: memberData.role || 'Member'
+          };
+        } else {
+          // Add new membership
+          prevTeamMemberships.push({
+            team_id: teamId,
+            role: memberData.role || 'Member'
+          });
+        }
+
         users[existingUserIndex] = {
           ...users[existingUserIndex],
           ...memberData,
-          team_id: teamId,
+          team_memberships: prevTeamMemberships,
           updated_at: new Date().toISOString()
         };
         user = users[existingUserIndex];
@@ -408,7 +451,10 @@ export class TeamUserService {
           jira_account_id: memberData.jira_account_id || memberData.accountId || '',
           employment_type: memberData.employment_type || 'full-time',
           hire_date: memberData.hire_date || memberData.hiringDate || '',
-          team_id: teamId,
+          team_memberships: [{
+            team_id: teamId,
+            role: memberData.role || 'Member'
+          }],
           capacity: memberData.capacity || 40,
           availability: memberData.availability || this.getDefaultAvailability(),
           avatar_url: memberData.avatar_url || memberData.avatarUrl || '',
@@ -420,7 +466,6 @@ export class TeamUserService {
       }
 
       await storage.set(this.USERS_KEY, users);
-
       console.log('✅ Team member added:', user.display_name, 'to team:', teams[teamIndex].name);
       return {
         success: true,
@@ -441,29 +486,23 @@ export class TeamUserService {
       if (!teamId || !memberAccountId) {
         throw new Error('Team ID and member account ID are required');
       }
-
       const users = await storage.get(this.USERS_KEY) || [];
       const userIndex = users.findIndex(user => 
-        user.team_id === teamId && 
-        (user.jira_account_id === memberAccountId || user.id === memberAccountId)
+        (user.team_memberships || []).some(m => m.team_id === teamId && m.team_id === memberAccountId)
       );
-
       if (userIndex === -1) {
         throw new Error('Team member not found');
       }
-
       const userName = users[userIndex].display_name;
-      
-      // Remove from team (set team_id to null)
+      // Remove from team (remove team_id from team_memberships array)
+      const prevTeamMemberships = users[userIndex].team_memberships || [];
       users[userIndex] = {
         ...users[userIndex],
-        team_id: null,
+        team_memberships: prevTeamMemberships.filter(m => m.team_id !== teamId),
         updated_at: new Date().toISOString(),
         updated_by: removedBy
       };
-
       await storage.set(this.USERS_KEY, users);
-
       console.log('✅ Team member removed:', userName);
       return {
         success: true,
@@ -507,7 +546,7 @@ export class TeamUserService {
         throw new Error('Team not found');
       }
 
-      const teamMembers = users.filter(user => user.team_id === teamId);
+      const teamMembers = users.filter(user => (user.team_memberships || []).some(m => m.team_id === teamId));
       const teamMemberIds = teamMembers.map(member => member.jira_account_id || member.id);
 
       // Filter PTO requests by date range
@@ -609,7 +648,7 @@ export class TeamUserService {
       const users = await storage.get(this.USERS_KEY) || [];
       const ptoRequests = await storage.get('pto_requests') || [];
 
-      const teamMembers = users.filter(user => user.team_id === teamId);
+      const teamMembers = users.filter(user => (user.team_memberships || []).some(m => m.team_id === teamId));
       const teamMemberIds = teamMembers.map(member => member.jira_account_id || member.id);
 
       // Filter by date range
@@ -669,31 +708,22 @@ export class TeamUserService {
 
       // Find user's team
       const user = users.find(u => u.jira_account_id === userId || u.id === userId);
-      if (!user || !user.team_id) {
+      if (!user || !user.team_memberships || user.team_memberships.length === 0) {
         return {
           success: true,
           data: []
         };
       }
 
-      const userTeam = teams.find(team => team.id === user.team_id);
-      if (!userTeam) {
-        return {
-          success: true,
-          data: []
-        };
-      }
-
-      // Enrich with member information
-      const teamMembers = users.filter(u => u.team_id === userTeam.id);
-      const enrichedTeam = {
-        ...userTeam,
-        members: teamMembers
-      };
+      const userTeams = teams.filter(team => (user.team_memberships || []).some(m => m.team_id === team.id));
+      const enrichedTeams = userTeams.map(team => ({
+        ...team,
+        members: users.filter(u => (u.team_memberships || []).some(m => m.team_id === team.id))
+      }));
 
       return {
         success: true,
-        data: [enrichedTeam]
+        data: enrichedTeams
       };
     } catch (error) {
       console.error('❌ Error getting user teams:', error);
@@ -809,7 +839,7 @@ export class TeamUserService {
                   jira_account_id: member.accountId || '',
                   employment_type: 'full-time',
                   hire_date: member.hiringDate || '',
-                  team_id: enhancedTeam.id,
+                  team_memberships: [{ team_id: enhancedTeam.id, role: 'Member' }],
                   capacity: 40,
                   availability: this.getDefaultAvailability(),
                   avatar_url: member.avatarUrl || '',
@@ -821,7 +851,9 @@ export class TeamUserService {
                 users.push(newUser);
               } else {
                 // Update existing user's team
-                existingUser.team_id = enhancedTeam.id;
+                const prevTeamMemberships = existingUser.team_memberships || [];
+                const newTeamMemberships = prevTeamMemberships.some(m => m.team_id === enhancedTeam.id) ? prevTeamMemberships : [...prevTeamMemberships, { team_id: enhancedTeam.id, role: 'Member' }];
+                existingUser.team_memberships = newTeamMemberships;
                 existingUser.updated_at = new Date().toISOString();
               }
             } catch (memberError) {
@@ -870,8 +902,8 @@ export class TeamUserService {
           summary: {
             totalTeams: teams.length,
             totalUsers: users.length,
-            usersWithTeams: users.filter(u => u.team_id).length,
-            usersWithoutTeams: users.filter(u => !u.team_id).length
+            usersWithTeams: users.filter(u => (u.team_memberships || []).length > 0).length,
+            usersWithoutTeams: users.filter(u => (u.team_memberships || []).length === 0).length
           }
         };
         
@@ -913,8 +945,89 @@ export class TeamUserService {
       };
     }
   }
+
+  // MIGRATION: On initialization, convert team_ids to team_memberships for all users
+  async migrateUserTeamMemberships() {
+    const users = await storage.get(this.USERS_KEY) || [];
+    let changed = false;
+    const migrated = users.map(user => {
+      if (user.team_memberships && !user.team_memberships) {
+        changed = true;
+        return {
+          ...user,
+          team_memberships: user.team_memberships.map(m => ({ team_id: m.team_id, role: m.role })),
+          team_ids: undefined
+        };
+      }
+      if (!user.team_memberships) {
+        return { ...user, team_memberships: [] };
+      }
+      return user;
+    });
+    if (changed) {
+      await storage.set(this.USERS_KEY, migrated);
+      console.log('✅ Migrated users to team_memberships array');
+    }
+  }
+
+  // Add validation method for team manager
+  async validateTeamManager(teamId, userId, newRole) {
+    if (newRole !== 'Manager') return true;
+    
+    const users = await storage.get(this.USERS_KEY) || [];
+    const existingManager = users.find(user => 
+      (user.team_memberships || []).some(m => 
+        m.team_id === teamId && m.role === 'Manager' && user.id !== userId
+      )
+    );
+    
+    return !existingManager;
+  }
+
+  // Add admin management methods
+  async addAdminUser(userId) {
+    const users = await storage.get(this.USERS_KEY) || [];
+    const user = users.find(u => u.id === userId || u.jira_account_id === userId);
+    if (user) {
+      user.isAdmin = true;
+      await storage.set(this.USERS_KEY, users);
+      return { success: true };
+    }
+    return { success: false, message: 'User not found' };
+  }
+
+  async removeAdminUser(userId) {
+    const users = await storage.get(this.USERS_KEY) || [];
+    const user = users.find(u => u.id === userId || u.jira_account_id === userId);
+    if (user) {
+      user.isAdmin = false;
+      await storage.set(this.USERS_KEY, users);
+      return { success: true };
+    }
+    return { success: false, message: 'User not found' };
+  }
+
+  // Migration: set isAdmin false for all users except provided admin IDs
+  async migrateIsAdmin(adminAccountIds = []) {
+    const users = await storage.get(this.USERS_KEY) || [];
+    users.forEach(user => {
+      user.isAdmin = adminAccountIds.includes(user.id) || adminAccountIds.includes(user.jira_account_id);
+    });
+    await storage.set(this.USERS_KEY, users);
+    console.log('✅ Migrated isAdmin property for all users');
+    return { success: true };
+  }
 }
 
 // Create and export singleton instance for Forge backend
 const teamUserService = new TeamUserService();
 export default teamUserService;
+
+// Script: Remove admin rights from all users
+export async function removeAllAdmins() {
+  const users = await storage.get('users') || [];
+  users.forEach(user => { user.isAdmin = false; });
+  await storage.set('users', users);
+  console.log('✅ All admin rights removed from users');
+  return { success: true, message: 'All admin rights removed from users' };
+}

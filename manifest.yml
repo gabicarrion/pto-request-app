@@ -10,6 +10,30 @@ modules:
   function:
     - key: resolver
       handler: index.handler
+    - key: api-users
+      handler: index.usersApiHandler
+    - key: api-teams
+      handler: index.teamsApiHandler
+    - key: api-availability
+      handler: index.availabilityApiHandler
+    - key: init-test-data
+      handler: test-data.handler
+
+  webtrigger:
+    - key: users-endpoint
+      function: api-users
+      allowedContexts:
+        - app:c239e4dd-f9a8-4835-aed1-7314a68cab3f
+    - key: teams-endpoint
+      function: api-teams
+      allowedContexts:
+        - app:c239e4dd-f9a8-4835-aed1-7314a68cab3f
+    - key: availability-endpoint
+      function: api-availability
+      allowedContexts:
+        - app:c239e4dd-f9a8-4835-aed1-7314a68cab3f
+    - key: init-test-data-endpoint
+      function: init-test-data
 
 resources:
   - key: main

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, X, User, AlertTriangle, Trash2, Copy } from 'lucide-react';
+import { Calendar, X, User, AlertTriangle, Trash2, CheckCircle, Clock, Users, MapPin } from 'lucide-react';
 import UserPicker from './UserPicker';
 import { getLeaveTypeEmoji } from './leaveTypeUtils';
+import { invoke } from '@forge/bridge';
 
 const PTOSubmissionModal = ({
   selectedDates = [],
@@ -37,6 +38,23 @@ const PTOSubmissionModal = ({
     }
   }, [isAdmin, currentUserData]);
 
+  // Auto-find manager for selected user
+  const findManagerForUser = (user) => {
+    if (!user) return null;
+    
+    // Find user in system database
+    const userData = allUsers.find(u => 
+      u.jira_account_id === user.accountId ||
+      u.email_address === user.emailAddress
+    );
+    
+    if (!userData?.team_id) return null;
+    
+    // Find user's team
+    const userTeam = allTeams.find(team => team.id === userData.team_id);
+    return userTeam?.manager || null;
+  };
+
   // Initialize form when component mounts or data changes
   useEffect(() => {
     // Initialize daily schedules from selected dates or date range
@@ -64,7 +82,7 @@ const PTOSubmissionModal = ({
       setFormData(prev => ({
         ...prev,
         targetUser: isAdmin ? prev.targetUser : currentUser,
-        manager: userManager || prev.manager,
+        manager: findManagerForUser(isAdmin ? prev.targetUser : currentUser) || userManager || prev.manager,
         startDate: dates[0] || '',
         endDate: dates[dates.length - 1] || '',
         dailySchedules: schedules
@@ -72,7 +90,7 @@ const PTOSubmissionModal = ({
     };
 
     initializeSchedules();
-  }, [selectedDates, currentUser, userManager, isAdmin]);
+  }, [selectedDates, currentUser, userManager, isAdmin, allUsers, allTeams]);
 
   // Update daily schedules when date range changes
   useEffect(() => {
@@ -116,7 +134,7 @@ const PTOSubmissionModal = ({
       newErrors.targetUser = 'User is required';
     }
     
-    if (!isAdmin && !formData.manager) {
+    if (!formData.manager) {
       newErrors.manager = 'Manager is required';
     }
     
@@ -157,8 +175,38 @@ const PTOSubmissionModal = ({
     return Object.keys(newErrors).length === 0;
   };
 
+  // Add normalizeManager function
+  const normalizeManager = (manager) => {
+    if (!manager) return null;
+    return {
+      ...manager,
+      accountId: manager.accountId || manager.jira_account_id || manager.id,
+      displayName: manager.displayName || manager.display_name || manager.name,
+      emailAddress: manager.emailAddress || manager.email_address,
+      avatarUrl: manager.avatarUrl || manager.avatar_url,
+    };
+  };
+
+  // Add normalizeUser function
+  const normalizeUser = (user) => {
+    if (!user) return null;
+    return {
+      ...user,
+      accountId: user.accountId || user.jira_account_id || user.id,
+      displayName: user.displayName || user.display_name || user.name,
+      emailAddress: user.emailAddress || user.email_address,
+      avatarUrl: user.avatarUrl || user.avatar_url,
+    };
+  };
+
   const handleSubmit = () => {
     if (!validateForm()) return;
+
+    const normalizedUser = normalizeUser(formData.targetUser);
+    if (!normalizedUser || !normalizedUser.accountId || !normalizedUser.displayName || !normalizedUser.emailAddress) {
+      setErrors(prev => ({ ...prev, targetUser: 'Please select a valid user.' }));
+      return;
+    }
 
     const totalDays = formData.dailySchedules.reduce(
       (sum, schedule) => sum + (schedule.type === 'FULL_DAY' ? 1 : 0.5),
@@ -171,19 +219,46 @@ const PTOSubmissionModal = ({
     );
 
     const submissionData = {
-      reporter: isAdmin ? formData.targetUser : currentUser,
-      manager: formData.manager,
+      reporter: normalizedUser,
+      manager: normalizeManager(formData.manager),
       startDate: formData.startDate,
       endDate: formData.endDate,
-      leaveType: formData.dailySchedules[0]?.leaveType || 'vacation', // Primary leave type
+      leaveType: formData.dailySchedules[0]?.leaveType || 'vacation',
       reason: formData.reason,
       dailySchedules: formData.dailySchedules,
       totalDays,
       totalHours,
-      ...(isAdmin && { targetUser: formData.targetUser })
+      ...(isAdmin && { targetUser: normalizedUser })
     };
 
     onSubmit(submissionData);
+  };
+
+  const handleUserChange = async (user) => {
+    if (!user) {
+      setFormData(prev => ({ ...prev, targetUser: null }));
+      return;
+    }
+
+    try {
+      // Get user details from database
+      const dbResponse = await invoke('getUsers');
+      const dbUsers = dbResponse.success ? dbResponse.data || [] : [];
+      const userDetails = dbUsers.find(u => 
+        u.jira_account_id === user.accountId || 
+        u.email_address === user.emailAddress
+      );
+
+      if (userDetails) {
+        setFormData(prev => ({ ...prev, targetUser: userDetails }));
+      } else {
+        // If user not in database, use Jira user data
+        setFormData(prev => ({ ...prev, targetUser: user }));
+      }
+    } catch (error) {
+      console.error('Failed to get user details:', error);
+      setFormData(prev => ({ ...prev, targetUser: user }));
+    }
   };
 
   const updateSchedule = (index, field, value) => {
@@ -233,19 +308,33 @@ const PTOSubmissionModal = ({
     { value: 'vacation', label: '🏖️ Vacation', emoji: '🏖️' },
     { value: 'sick', label: '🤒 Sick Leave', emoji: '🤒' },
     { value: 'personal', label: '👤 Personal Day', emoji: '👤' },
-    { value: 'holiday', label: '🎉 Holiday', emoji: '🎉' }
+    { value: 'holiday', label: '🎉 Holiday', emoji: '🎉' },
+    { value: 'other leave type', label: '📝 Other Leave Type', emoji: '📝' }
   ];
+
+  // Calculate summary data
+  const summaryData = {
+    totalDays: formData.dailySchedules.reduce((sum, s) => sum + (s.type === 'FULL_DAY' ? 1 : 0.5), 0),
+    totalHours: formData.dailySchedules.reduce((sum, s) => sum + (s.type === 'FULL_DAY' ? 8 : 4), 0),
+    leaveTypeBreakdown: formData.dailySchedules.reduce((acc, schedule) => {
+      acc[schedule.leaveType] = (acc[schedule.leaveType] || 0) + (schedule.type === 'FULL_DAY' ? 1 : 0.5);
+      return acc;
+    }, {}),
+    workingDays: formData.dailySchedules.length,
+    dateRange: formData.startDate && formData.endDate ? 
+      `${new Date(formData.startDate).toLocaleDateString()} - ${new Date(formData.endDate).toLocaleDateString()}` : ''
+  };
 
   return (
     <div className="modal-overlay">
       <div className="modal-content pto-submission-modal">
         <div className="modal-header">
           <h3 className="modal-title">
-            <Calendar size={22} style={{ marginRight: 8, marginBottom: -3 }} />
+            <Calendar size={20} />
             {isAdmin ? 'Create PTO Request (Admin)' : 'Submit PTO Request'}
           </h3>
           <button onClick={onClose} className="modal-close">
-            <X size={24} />
+            <X size={20} />
           </button>
         </div>
 
@@ -256,12 +345,12 @@ const PTOSubmissionModal = ({
               <AlertTriangle size={20} />
               <div>
                 <strong>User Not in System</strong>
-                <p>Your user is not added to Team Manager. Please ask HR to update it.</p>
+                <p>Your user profile is not set up in the team management system. Please contact HR to complete your setup.</p>
               </div>
             </div>
           )}
 
-          {/* Target User Section */}
+          {/* Employee Selection */}
           <div className="form-section">
             <label className="form-label">
               Employee {isAdmin ? '*' : ''}
@@ -270,75 +359,83 @@ const PTOSubmissionModal = ({
             {isAdmin ? (
               <UserPicker
                 selectedUser={formData.targetUser}
-                onSelect={user => {
-                  setFormData(prev => ({ ...prev, targetUser: user }));
-                  // Auto-set manager if user is in system
-                  const userData = allUsers.find(u => 
-                    u.jira_account_id === user?.accountId ||
-                    u.email_address === user?.emailAddress
-                  );
-                  if (userData?.team_id) {
-                    const userTeam = allTeams.find(team => team.id === userData.team_id);
-                    if (userTeam?.manager) {
-                      setFormData(prev => ({ ...prev, manager: userTeam.manager }));
-                    }
-                  }
-                }}
+                onSelect={handleUserChange}
                 placeholder="Search and select employee"
                 required
                 error={errors.targetUser}
+                useBackendSearch={true}
               />
             ) : (
-              <div className="user-display">
-                <div className="user-avatar">
+              <div className="user-display-card">
+                <div className="user-avatar-large">
                   {currentUser?.avatarUrl ? (
                     <img src={currentUser.avatarUrl} alt={currentUser.displayName} />
                   ) : (
-                    <div className="avatar-placeholder">
-                      {currentUser?.displayName?.charAt(0) || <User size={16} />}
+                    <div className="avatar-placeholder-large">
+                      {currentUser?.displayName?.charAt(0) || <User size={20} />}
                     </div>
                   )}
                 </div>
-                <div className="user-info">
-                  <div className="user-name">{currentUser?.displayName}</div>
-                  <div className="user-email">{currentUser?.emailAddress}</div>
+                <div className="user-info-detailed">
+                  <div className="user-name-large">{currentUser?.displayName}</div>
+                  <div className="user-email-large">{currentUser?.emailAddress}</div>
+                  {currentUserData?.team_id && (
+                    <div className="user-team">
+                      <Users size={14} />
+                      {allTeams.find(t => t.id === currentUserData.team_id)?.name || 'Team Member'}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
+            {errors.targetUser && <div className="error-text">{errors.targetUser}</div>}
           </div>
 
-          {/* Manager Section */}
-          {!isAdmin && (
-            <div className="form-section">
-              <label className="form-label">Manager *</label>
-              {formData.manager ? (
-                <div className="user-display">
-                  <div className="user-avatar">
-                    {formData.manager.avatarUrl ? (
-                      <img src={formData.manager.avatarUrl} alt={formData.manager.displayName} />
-                    ) : (
-                      <div className="avatar-placeholder">
-                        {formData.manager.displayName?.charAt(0) || <User size={16} />}
-                      </div>
-                    )}
-                  </div>
-                  <div className="user-info">
-                    <div className="user-name">{formData.manager.displayName}</div>
-                    <div className="user-email">{formData.manager.emailAddress}</div>
+          {/* Manager Section - Always show */}
+          <div className="form-section">
+            <label className="form-label">Manager *</label>
+            {formData.manager ? (
+              <div className="user-display-card manager-display">
+                <div className="user-avatar-large">
+                  {formData.manager.avatarUrl ? (
+                    <img src={formData.manager.avatarUrl} alt={formData.manager.displayName} />
+                  ) : (
+                    <div className="avatar-placeholder-large">
+                      {formData.manager.displayName?.charAt(0) || <User size={20} />}
+                    </div>
+                  )}
+                </div>
+                <div className="user-info-detailed">
+                  <div className="user-name-large">{formData.manager.displayName}</div>
+                  <div className="user-email-large">{formData.manager.emailAddress}</div>
+                  <div className="manager-badge">
+                    <CheckCircle size={14} />
+                    Approving Manager
                   </div>
                 </div>
-              ) : (
-                <UserPicker
-                  selectedUser={formData.manager}
-                  onSelect={manager => setFormData(prev => ({ ...prev, manager }))}
-                  placeholder="Search and select your manager"
-                  required
-                  error={errors.manager}
-                />
-              )}
-              {errors.manager && <div className="error-text">{errors.manager}</div>}
-            </div>
-          )}
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, manager: null }))}
+                    className="btn btn-sm btn-secondary"
+                    title="Change Manager"
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+            ) : (
+              <UserPicker
+                selectedUser={formData.manager}
+                onSelect={manager => setFormData(prev => ({ ...prev, manager }))}
+                placeholder="Search and select approving manager"
+                required
+                error={errors.manager}
+                useBackendSearch={true}
+              />
+            )}
+            {errors.manager && <div className="error-text">{errors.manager}</div>}
+          </div>
 
           {/* Date Range Section */}
           <div className="form-section">
@@ -377,7 +474,7 @@ const PTOSubmissionModal = ({
               onChange={e => setFormData(prev => ({ ...prev, reason: e.target.value }))}
               className="form-control"
               rows="3"
-              placeholder="Please provide additional details about your PTO request"
+              placeholder="Please provide additional details about your PTO request..."
             />
           </div>
 
@@ -389,13 +486,13 @@ const PTOSubmissionModal = ({
                 
                 {/* Quick Actions */}
                 <div className="quick-actions">
-                  <span className="quick-actions-label">Mark all days:</span>
+                  <span className="quick-actions-label">Apply to all:</span>
                   {leaveTypes.map(type => (
                     <button
                       key={type.value}
                       type="button"
                       onClick={() => markAllDaysWithLeaveType(type.value)}
-                      className="btn btn-sm btn-secondary"
+                      className="btn btn-sm btn-secondary quick-action-btn"
                       title={`Mark all days as ${type.label}`}
                     >
                       <span>{type.emoji}</span>
@@ -459,57 +556,74 @@ const PTOSubmissionModal = ({
             </div>
           )}
 
-          {/* Request Summary */}
+          {/* Professional Request Summary */}
           {formData.dailySchedules.length > 0 && (
             <div className="form-section">
-              <div className="request-summary">
-                <h4>Request Summary</h4>
-                <div className="summary-grid">
-                  <div className="summary-item">
-                    <span className="summary-label">Total Days:</span>
-                    <span className="summary-value">
-                      {formData.dailySchedules.reduce((sum, s) => sum + (s.type === 'FULL_DAY' ? 1 : 0.5), 0)}
-                    </span>
-                  </div>
-                  <div className="summary-item">
-                    <span className="summary-label">Total Hours:</span>
-                    <span className="summary-value">
-                      {formData.dailySchedules.reduce((sum, s) => sum + (s.type === 'FULL_DAY' ? 8 : 4), 0)}h
-                    </span>
-                  </div>
-                  <div className="summary-item">
-                    <span className="summary-label">Date Range:</span>
-                    <span className="summary-value">
-                      {formData.startDate && formData.endDate && 
-                        `${new Date(formData.startDate).toLocaleDateString()} - ${new Date(formData.endDate).toLocaleDateString()}`
-                      }
-                    </span>
-                  </div>
-                  <div className="summary-item">
-                    <span className="summary-label">{isAdmin ? 'For User:' : 'Manager:'}</span>
-                    <span className="summary-value">
-                      {isAdmin 
-                        ? formData.targetUser?.displayName || 'Not selected'
-                        : formData.manager?.displayName || 'Not selected'
-                      }
-                    </span>
+              <div className="request-summary-card">
+                <div className="summary-header">
+                  <h4>Request Summary</h4>
+                  <div className="summary-status">
+                    <Clock size={16} />
+                    Ready to Submit
                   </div>
                 </div>
+                
+                <div className="summary-content">
+                  {/* Key Metrics */}
+                  <div className="summary-metrics">
+                    <div className="metric-item">
+                      <div className="metric-value">{summaryData.totalDays}</div>
+                      <div className="metric-label">Days Off</div>
+                    </div>
+                    <div className="metric-item">
+                      <div className="metric-value">{summaryData.totalHours}h</div>
+                      <div className="metric-label">Total Hours</div>
+                    </div>
+                    <div className="metric-item">
+                      <div className="metric-value">{summaryData.workingDays}</div>
+                      <div className="metric-label">Scheduled Days</div>
+                    </div>
+                  </div>
 
-                {/* Leave Type Breakdown */}
-                <div className="leave-type-breakdown">
-                  <span className="breakdown-label">Leave Types:</span>
-                  <div className="breakdown-items">
-                    {Object.entries(
-                      formData.dailySchedules.reduce((acc, schedule) => {
-                        acc[schedule.leaveType] = (acc[schedule.leaveType] || 0) + (schedule.type === 'FULL_DAY' ? 1 : 0.5);
-                        return acc;
-                      }, {})
-                    ).map(([type, days]) => (
-                      <span key={type} className="breakdown-item">
-                        {getLeaveTypeEmoji(type)} {type}: {days} days
+                  {/* Summary Details */}
+                  <div className="summary-details">
+                    <div className="detail-row">
+                      <span className="detail-label">
+                        <MapPin size={16} />
+                        Date Range:
                       </span>
-                    ))}
+                      <span className="detail-value">{summaryData.dateRange}</span>
+                    </div>
+                    
+                    <div className="detail-row">
+                      <span className="detail-label">
+                        <User size={16} />
+                        {isAdmin ? 'Employee:' : 'Approver:'}
+                      </span>
+                      <span className="detail-value">
+                        {isAdmin 
+                          ? formData.targetUser?.displayName || 'Not selected'
+                          : formData.manager?.displayName || 'Not selected'
+                        }
+                      </span>
+                    </div>
+
+                    {/* Leave Type Breakdown */}
+                    {Object.keys(summaryData.leaveTypeBreakdown).length > 0 && (
+                      <div className="detail-row">
+                        <span className="detail-label">
+                          <Calendar size={16} />
+                          Leave Types:
+                        </span>
+                        <div className="leave-type-tags">
+                          {Object.entries(summaryData.leaveTypeBreakdown).map(([type, days]) => (
+                            <span key={type} className="leave-type-tag">
+                              {getLeaveTypeEmoji(type)} {type}: {days} day{days !== 1 ? 's' : ''}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -537,7 +651,7 @@ const PTOSubmissionModal = ({
               onClick={handleSubmit}
               disabled={
                 !formData.targetUser ||
-                (!isAdmin && !formData.manager) ||
+                !formData.manager ||
                 !formData.startDate ||
                 !formData.endDate ||
                 formData.dailySchedules.length === 0 ||
@@ -553,14 +667,14 @@ const PTOSubmissionModal = ({
           {/* Admin Mode Notice */}
           {isAdmin && (
             <div className="admin-notice">
-              <strong>Admin Mode:</strong> This PTO request will be created with admin privileges.
+              <strong>Admin Mode:</strong> This PTO request will be created with admin privileges and may be automatically approved.
             </div>
           )}
 
           {/* Instructions */}
           {formData.dailySchedules.length === 0 && (
             <div className="instructions">
-              <strong>Tip:</strong> Select start and end dates to configure your PTO schedule, or go back to select dates on the calendar.
+              <strong>Next Step:</strong> Select start and end dates to configure your PTO schedule, or return to the calendar to select specific dates.
             </div>
           )}
         </div>

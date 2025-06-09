@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { Calendar, Clock, Users, CheckCircle, User, Shield, UserCheck } from 'lucide-react';
 import { invoke } from '@forge/bridge';
@@ -6,6 +7,7 @@ import { invoke } from '@forge/bridge';
 import Notification from './components/Notifications';
 import AdminManagement from './views/AdminManagement';
 import ManagerView from './views/ManagerView';
+import UserPicker from './components/UserPicker';
 
 // Pages & Hooks
 import CalendarPage from './views/CalendarPage';
@@ -23,6 +25,9 @@ const PTOManagementApp = () => {
   const [userTeams, setUserTeams] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [allTeams, setAllTeams] = useState([]);
+  const [isViewingAsNonAdmin, setIsViewingAsNonAdmin] = useState(false);
+  const [viewAsUser, setViewAsUser] = useState(null);
+  const [viewAsIsAdmin, setViewAsIsAdmin] = useState(false);
 
   // Custom hooks
   const { currentUser, loading: userLoading, error: userError, isAdmin } = useCurrentUser();
@@ -48,7 +53,9 @@ const PTOManagementApp = () => {
       
       try {
         // Load user teams
-        const response = await invoke('getUserTeams', { userId: currentUser.accountId });
+        const response = await invoke('getUserTeams', { 
+          userId: isViewingAsNonAdmin ? viewAsUser.jira_account_id : currentUser.accountId 
+        });
         if (response.success) {
           setUserTeams(response.data || []);
         }
@@ -68,11 +75,12 @@ const PTOManagementApp = () => {
           setAllTeams(teams);
           
           // Check if current user is a manager of any team
+          const userId = isViewingAsNonAdmin ? (viewAsUser.jira_account_id || viewAsUser.id) : (currentUser.jira_account_id || currentUser.id);
           const managedTeams = teams.filter(team =>
-            team.manager?.accountId === currentUser.accountId ||
-            team.manager?.jira_account_id === currentUser.accountId
+            team.manager?.jira_account_id === userId ||
+            team.manager?.id === userId
           );
-          setIsManager(managedTeams.length > 0 || isAdmin);
+          setIsManager(managedTeams.length > 0 || (isAdmin && !isViewingAsNonAdmin));
         }
       } catch (error) {
         console.error('Error loading additional data:', error);
@@ -80,7 +88,7 @@ const PTOManagementApp = () => {
     };
 
     loadAllData();
-  }, [currentUser, isAdmin]);
+  }, [currentUser, isAdmin, isViewingAsNonAdmin, viewAsUser]);
 
   // Initialize app with admin setup
   useEffect(() => {
@@ -100,6 +108,15 @@ const PTOManagementApp = () => {
           }
         } else {
           console.log('✅ PTO App and Admin initialized:', dbResult.data);
+        }
+        
+        // Clear any stale import validation data
+        try {
+          await invoke('clearImportValidationData');
+          console.log('✅ Cleared any stale import validation data on app start');
+        } catch (clearError) {
+          console.warn('⚠️ Could not clear import validation data:', clearError);
+          // Non-fatal error, continue initialization
         }
         
         console.log('✅ PTO App initialization complete');
@@ -199,9 +216,35 @@ const PTOManagementApp = () => {
     }
   };
 
-  const handleEditRequest = (request) => {
-    // Implementation for editing requests
-    showNotification('Edit functionality will be implemented soon!');
+  const handleEditRequest = async (request) => {
+    try {
+      const response = await invoke('editPTORequest', {
+        requestId: request.id,
+        editedBy: currentUser.accountId,
+        updatedData: {
+          startDate: request.startDate,
+          endDate: request.endDate,
+          leaveType: request.leaveType,
+          reason: request.reason,
+          dailySchedules: request.dailySchedules
+        }
+      });
+
+      if (response.success) {
+        showNotification('PTO request updated successfully and resubmitted for approval');
+        // Refresh the requests list
+        if (isViewingAsNonAdmin) {
+          loadUserRequests(viewAsUser);
+        } else {
+          loadAllRequests();
+        }
+      } else {
+        showNotification(response.message || 'Failed to update PTO request', 'error');
+      }
+    } catch (error) {
+      console.error('Error updating PTO request:', error);
+      showNotification('Failed to update PTO request', 'error');
+    }
   };
 
   const handleCancelRequest = async (request) => {
@@ -222,6 +265,39 @@ const PTOManagementApp = () => {
       console.error('Error cancelling PTO request:', error);
       showNotification('Failed to cancel PTO request', 'error');
     }
+  };
+
+  const handleViewAsNonAdmin = async (user) => {
+    if (!user) {
+      setIsViewingAsNonAdmin(false);
+      setViewAsUser(null);
+      setViewAsIsAdmin(false);
+      return;
+    }
+
+    try {
+      // Get user's teams
+      const response = await invoke('getUserTeams', { userId: user.jira_account_id || user.id });
+      if (response.success) {
+        setViewAsUser(user);
+        setUserTeams(response.data || []);
+        setIsViewingAsNonAdmin(true);
+        // Check admin status for the impersonated user
+        const adminResp = await invoke('checkUserAdminStatus', { accountId: user.jira_account_id || user.accountId || user.id });
+        setViewAsIsAdmin(adminResp.success ? adminResp.data.isAdmin : false);
+      }
+    } catch (error) {
+      console.error('Error setting view as user:', error);
+      setViewAsIsAdmin(false);
+    }
+  };
+
+  const handleExitViewAs = () => {
+    setIsViewingAsNonAdmin(false);
+    setViewAsUser(null);
+    setViewAsIsAdmin(false);
+    // Reload original user data
+    loadAllData();
   };
 
   // Navigation tabs configuration
@@ -246,7 +322,7 @@ const PTOManagementApp = () => {
       description: 'Manage team PTO requests'
     }] : []),
     // Admin tab - only show for admin users
-    ...(isAdmin ? [{ 
+    ...(((isViewingAsNonAdmin ? viewAsIsAdmin : isAdmin)) ? [{ 
       id: 'admin', 
       label: 'Admin', 
       icon: Shield,
@@ -255,9 +331,10 @@ const PTOManagementApp = () => {
   ];
 
   // Filter data based on user
-  const userRequests = getUserRequests(currentUser?.accountId);
+  const effectiveAccountId = isViewingAsNonAdmin ? viewAsUser?.accountId : currentUser?.accountId;
+  const userRequests = getUserRequests(effectiveAccountId);
   const pendingRequests = getPendingRequests().filter(req => 
-    req.requester_id !== currentUser?.accountId
+    req.requester_id !== effectiveAccountId
   );
 
   // Show loading state during initialization
@@ -309,175 +386,163 @@ const PTOManagementApp = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
-                <Calendar size={20} className="text-white" />
+    <div className="pto-management-app">
+      {currentUser && (
+        <div className="app-header">
+          <div className="app-header-left">
+            <h1>PTO Management</h1>
+          </div>
+          <div className="app-header-right">
+            {isAdmin && !isViewingAsNonAdmin && (
+              <div className="view-as-controls">
+                <UserPicker
+                  selectedUser={viewAsUser}
+                  onSelect={handleViewAsNonAdmin}
+                  placeholder="View as user..."
+                  useBackendSearch={true}
+                />
               </div>
-              <div>
-                <h1 className="text-xl font-semibold text-gray-900">PTO Management</h1>
+            )}
+            {isViewingAsNonAdmin && (
+              <div className="view-as-banner">
+                <span>Viewing as: {viewAsUser?.display_name || viewAsUser?.displayName}</span>
+                <button 
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleExitViewAs}
+                >
+                  Exit View As
+                </button>
               </div>
-            </div>
-            
-            <div className="flex items-center space-x-4">
-              {/* Quick Stats */}
-              <div className="hidden md:flex items-center space-x-4 text-sm text-gray-600">
-                {isManager && (
-                  <div className="flex items-center space-x-1">
-                    <div className="w-2 h-2 bg-orange-400 rounded-full"></div>
-                    <span>{pendingRequests.length} pending approvals</span>
-                  </div>
-                )}
-                <div className="flex items-center space-x-1">
-                  <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                  <span>{userRequests.filter(r => r.status === 'approved').length} approved</span>
-                </div>
-                {userTeams.length > 0 && (
-                  <div className="flex items-center space-x-1">
-                    <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                    <span>{userTeams.length} teams</span>
-                  </div>
-                )}
-              </div>
-              
-              {/* User Profile */}
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full flex items-center justify-center text-white text-sm font-semibold relative">
-                  {currentUser.displayName?.charAt(0) || <User size={16} />}
-                  {isAdmin && (
-                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-purple-500 rounded-full flex items-center justify-center">
-                      <Shield size={8} className="text-white" />
-                    </div>
-                  )}
-                  {isManager && !isAdmin && (
-                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-500 rounded-full flex items-center justify-center">
-                      <UserCheck size={8} className="text-white" />
-                    </div>
-                  )}
-                </div>
-                <div className="hidden sm:block">
-                  <div className="text-sm font-medium text-gray-700 flex items-center space-x-1">
-                    <span>{currentUser.displayName}</span>
-                    {isAdmin && <Shield size={12} className="text-purple-600" />}
-                    {isManager && !isAdmin && <UserCheck size={12} className="text-orange-600" />}
-                  </div>
-                  <div className="text-xs text-gray-500">{currentUser.emailAddress}</div>
-                </div>
-              </div>
+            )}
+            <div className="user-info">
+              <span>{currentUser.displayName}</span>
+              {isAdmin && !isViewingAsNonAdmin && <span className="badge badge-admin">Admin</span>}
+              {isManager && !isViewingAsNonAdmin && <span className="badge badge-manager">Manager</span>}
             </div>
           </div>
         </div>
-      </header>
-
-      {/* Navigation */}
-      <nav className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex space-x-8">
+      )}
+      <div className="min-h-screen bg-gray-50">
+        {/* Clean Top Navigation Bar */}
+        <div className="app-topbar">
+          <div className="app-logo">
+            <div className="app-logo-icon">
+              <Calendar size={20} />
+            </div>
+            <span style={{ fontWeight: 600, fontSize: '1.125rem', color: '#1f2937' }}>PTO Request</span>
+          </div>
+          
+          <div className="nav-tabs condensed">
             {tabs.map(tab => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
-              
               return (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-                    isActive
-                      ? tab.id === 'admin' 
-                        ? 'border-purple-500 text-purple-600'
-                        : tab.id === 'manager'
-                        ? 'border-orange-500 text-orange-600'
-                        : 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
+                  onClick={async () => {
+                  // Clear validation data when switching tabs
+                  try {
+                    await invoke('clearImportValidationData');
+                  } catch (error) {
+                    console.warn('⚠️ Could not clear validation data:', error);
+                  }
+                  setActiveTab(tab.id);
+                }}
+                  className={`nav-tab${isActive ? ' active' : ''}${tab.id === 'admin' ? ' admin' : ''}${tab.id === 'manager' && !isAdmin ? ' manager' : ''}`}
                   title={tab.description}
                 >
-                  <Icon size={16} />
+                  <Icon size={18} />
                   <span>{tab.label}</span>
                   {tab.id === 'manager' && pendingRequests.length > 0 && (
-                    <span className="bg-orange-500 text-white text-xs rounded-full px-2 py-0.5 min-w-[20px] text-center">
-                      {pendingRequests.length}
-                    </span>
+                    <span className="nav-tab-badge">{pendingRequests.length}</span>
                   )}
                   {tab.id === 'admin' && (
-                    <span className="bg-purple-100 text-purple-600 text-xs rounded-full px-2 py-0.5">
-                      Admin
-                    </span>
+                    <span className="nav-tab-label admin">Admin</span>
                   )}
                   {tab.id === 'manager' && !isAdmin && (
-                    <span className="bg-orange-100 text-orange-600 text-xs rounded-full px-2 py-0.5">
-                      Manager
-                    </span>
+                    <span className="nav-tab-label manager">Manager</span>
                   )}
                 </button>
               );
             })}
           </div>
-        </div>
-      </nav>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'calendar' && (
-          <CalendarPage
-            events={ptoRequests}
-            onDateSelect={handleDateSelect}
-            selectedDates={selectedDates}
-            onSubmitPTO={handlePTOSubmit}
-            currentUser={currentUser}
-            allUsers={allUsers}
-            allTeams={allTeams}
-            isAdmin={isAdmin}
-          />
-        )}
-        
-        {activeTab === 'requests' && (
-          <RequestsPage
-            requests={userRequests}
-            currentUser={currentUser}
-            onEditRequest={handleEditRequest}
-            onCancelRequest={handleCancelRequest}
-          />
-        )}
-        
-        {activeTab === 'manager' && isManager && (
-          <ManagerView
-            currentUser={currentUser}
-            isAdmin={isAdmin}
-            showNotification={showNotification}
-          />
-        )}
-
-        {activeTab === 'admin' && isAdmin && (
-          <AdminManagement
-            currentUser={currentUser}
-            showNotification={showNotification}
-          />
-        )}
-      </main>
-
-      {/* Loading Overlay */}
-      {(requestsLoading || appLoading) && (
-        <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 flex items-center space-x-3">
-            <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-            <span className="text-gray-700">Processing...</span>
+          
+          <div className="app-user-profile">
+            <div className="user-avatar-header">
+              {currentUser.displayName?.charAt(0) || <User size={16} />}
+              {isAdmin && <span className="user-badge admin"><Shield size={8} /></span>}
+              {isManager && !isAdmin && <span className="user-badge manager"><UserCheck size={8} /></span>}
+            </div>
+            <div className="user-info-header">
+              <div className="user-name-header">
+                <span>{currentUser.displayName}</span>
+                {isAdmin && <Shield size={12} style={{ color: '#8b5cf6' }} />}
+                {isManager && !isAdmin && <UserCheck size={12} style={{ color: '#f97316' }} />}
+              </div>
+              <div className="user-email-header">{currentUser.emailAddress}</div>
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Notification */}
-      {notification && (
-        <Notification
-          message={notification.message}
-          type={notification.type}
-          onClose={() => setNotification(null)}
-        />
-      )}
+        {/* Main Content */}
+        <main style={{ maxWidth: '80rem', margin: '0 auto', padding: '2rem 1rem' }}>
+          {activeTab === 'calendar' && (
+            <CalendarPage
+              events={ptoRequests}
+              onDateSelect={handleDateSelect}
+              selectedDates={selectedDates}
+              onSubmitPTO={handlePTOSubmit}
+              currentUser={isViewingAsNonAdmin ? viewAsUser : currentUser}
+              allUsers={allUsers}
+              allTeams={allTeams}
+              isAdmin={isViewingAsNonAdmin ? viewAsIsAdmin : isAdmin}
+            />
+          )}
+          
+          {activeTab === 'requests' && (
+            <RequestsPage
+              requests={userRequests}
+              currentUser={isViewingAsNonAdmin ? viewAsUser : currentUser}
+              onEditRequest={handleEditRequest}
+              onCancelRequest={handleCancelRequest}
+            />
+          )}
+          
+          {activeTab === 'manager' && isManager && (
+            <ManagerView
+              currentUser={currentUser}
+              isAdmin={isAdmin}
+              showNotification={showNotification}
+            />
+          )}
+
+          {activeTab === 'admin' && isAdmin && (
+            <AdminManagement
+              currentUser={currentUser}
+              showNotification={showNotification}
+            />
+          )}
+        </main>
+
+        {/* Loading Overlay */}
+        {(requestsLoading || appLoading) && (
+          <div className="modal-overlay">
+            <div className="modal-content" style={{ maxWidth: 320, padding: 24, textAlign: 'center' }}>
+              <div className="loading-spinner" style={{ margin: '0 auto 1rem' }}></div>
+              <span>Processing...</span>
+            </div>
+          </div>
+        )}
+
+        {/* Notification */}
+        {notification && (
+          <Notification
+            message={notification.message}
+            type={notification.type}
+            onClose={() => setNotification(null)}
+          />
+        )}
+      </div>
     </div>
   );
 };

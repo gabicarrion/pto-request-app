@@ -89,7 +89,7 @@ export class PTOService {
   }
 
   // Approve/Decline PTO request
-  async updatePTORequestStatus(requestId, status, reviewerComments = '') {
+  async updatePTORequestStatus(requestId, status) {
     try {
       const request = await this.db.findById('pto_requests', requestId);
       if (!request) {
@@ -98,8 +98,7 @@ export class PTOService {
 
       const updatedRequest = await this.db.update('pto_requests', requestId, {
         status: status.toLowerCase(),
-        reviewed_at: new Date().toISOString(),
-        reviewer_comments: reviewerComments
+        reviewed_at: new Date().toISOString()
       });
 
       // Notify requester

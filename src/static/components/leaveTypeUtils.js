@@ -24,19 +24,25 @@ export const LEAVE_TYPES = {
     label: '🎉 Holiday',
     emoji: '🎉',
     color: 'bg-green-100 text-green-800'
+  },
+  'other leave type': {
+    id: 'other leave type',
+    label: '📝 Other Leave Type',
+    emoji: '📝',
+    color: 'bg-gray-100 text-gray-800'
   }
 };
 
 export const getLeaveTypeEmoji = (type) => {
-  return LEAVE_TYPES[type.toLowerCase()]?.emoji || '📅';
+  return LEAVE_TYPES[type?.toLowerCase()]?.emoji || '📅';
 };
 
 export const getLeaveTypeLabel = (type) => {
-  return LEAVE_TYPES[type.toLowerCase()]?.label || type;
+  return LEAVE_TYPES[type?.toLowerCase()]?.label || type;
 };
 
 export const getLeaveTypeColor = (type) => {
-  return LEAVE_TYPES[type.toLowerCase()]?.color || 'bg-gray-100 text-gray-800';
+  return LEAVE_TYPES[type?.toLowerCase()]?.color || 'bg-gray-100 text-gray-800';
 };
 
 export const getLeaveTypesArray = () => {

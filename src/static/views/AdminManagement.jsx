@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
   Shield, Users, Calendar, Building2, UserCheck, X, Download, 
-  BarChart3, TrendingUp, Clock, CheckCircle, XCircle, Settings, Plus
+  BarChart3, TrendingUp, Clock, CheckCircle, XCircle, Settings, Plus, Upload, AlertTriangle
 } from 'lucide-react';
 import { invoke } from '@forge/bridge';
 import UserPicker from '../components/UserPicker';
 import PTOSubmissionModal from '../components/PTOSubmissionModal';
 import TeamManagementModal from '../components/TeamManagementModal';
+import UserPTOManagement from '../components/UserPTOManagement';
+import PTOImportModal from '../components/PTOImportModal';
 
 const AdminManagement = ({ currentUser, showNotification }) => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -20,6 +22,15 @@ const AdminManagement = ({ currentUser, showNotification }) => {
   const [showTeamManagementModal, setShowTeamManagementModal] = useState(false);
   const [showAddPTOModal, setShowAddPTOModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFilters, setExportFilters] = useState({
+    startDate: '',
+    endDate: '',
+    requesterId: '',
+    managerId: '',
+    leaveType: ''
+  });
 
   // Report configuration state
   const [reportConfig, setReportConfig] = useState({
@@ -29,6 +40,19 @@ const AdminManagement = ({ currentUser, showNotification }) => {
     startDate: '',
     endDate: '',
     status: 'all'
+  });
+
+  // Add a state to force remount of PTOSubmissionModal
+  const [ptoModalKey, setPtoModalKey] = useState(Date.now());
+
+  const [stats, setStats] = useState({
+    totalAdmins: 0,
+    totalTeams: 0,
+    totalUsers: 0,
+    totalRequests: 0,
+    approvedRequests: 0,
+    pendingRequests: 0,
+    declinedRequests: 0
   });
 
   useEffect(() => { 
@@ -55,8 +79,26 @@ const AdminManagement = ({ currentUser, showNotification }) => {
   const loadAdminUsers = async () => {
     try {
       const response = await invoke('getAdminUsers');
-      if (response.success) setAdminUsers(response.data || []);
-    } catch {}
+      if (response.success) {
+        const adminUsers = response.data || [];
+        // Get full user details from database
+        const dbResponse = await invoke('getUsers');
+        const dbUsers = dbResponse.success ? dbResponse.data || [] : [];
+        
+        // Map admin users with full details
+        const enrichedAdminUsers = adminUsers.map(admin => {
+          const userDetails = dbUsers.find(u => 
+            u.jira_account_id === admin.accountId || 
+            u.email_address === admin.emailAddress
+          );
+          return userDetails || admin;
+        });
+        
+        setAdminUsers(enrichedAdminUsers);
+      }
+    } catch (error) {
+      console.error('Failed to load admin users:', error);
+    }
   };
 
   const loadAllTeams = async () => {
@@ -82,11 +124,12 @@ const AdminManagement = ({ currentUser, showNotification }) => {
 
   const loadJiraUsers = async () => {
     try {
-      const response = await invoke('getInternalJiraUsersByGroup', {
-        groupName: 'jira-users'
+      const response = await invoke('getInternalJiraUsers', {
+        startAt: 0,
+        maxResults: 50
       });
       if (response.success) {
-        setJiraUsers(response.data || []);
+        setJiraUsers(response.data.users || []);
       }
     } catch (error) {
       console.error('Failed to load Jira users:', error);
@@ -134,20 +177,33 @@ const AdminManagement = ({ currentUser, showNotification }) => {
     }
   };
 
+  // Add normalizeManager function
+  const normalizeManager = (manager) => {
+    if (!manager) return null;
+    return {
+      ...manager,
+      accountId: manager.accountId || manager.jira_account_id || manager.id,
+      displayName: manager.displayName || manager.display_name || manager.name,
+      emailAddress: manager.emailAddress || manager.email_address,
+      avatarUrl: manager.avatarUrl || manager.avatar_url,
+    };
+  };
+
   const handleSubmitPTOForUser = async (ptoData) => {
     if (!ptoData?.targetUser) {
       showNotification('Please select a user for PTO', 'error');
       return;
     }
     try {
+      const normalizedManager = normalizeManager(ptoData.manager);
       const response = await invoke('submitPTOForUser', {
         requestData: {
           requester_id: ptoData.targetUser.accountId,
           requester_name: ptoData.targetUser.displayName,
           requester_email: ptoData.targetUser.emailAddress,
-          manager_id: ptoData.manager?.accountId || 'admin',
-          manager_name: ptoData.manager?.displayName || currentUser.displayName,
-          manager_email: ptoData.manager?.emailAddress || currentUser.emailAddress,
+          manager_id: normalizedManager?.accountId || 'admin',
+          manager_name: normalizedManager?.displayName || currentUser.displayName,
+          manager_email: normalizedManager?.emailAddress || currentUser.emailAddress,
           start_date: ptoData.startDate,
           end_date: ptoData.endDate,
           leave_type: ptoData.leaveType || 'vacation',
@@ -176,7 +232,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
       let filteredRequests = [...allRequests];
 
       if (reportConfig.scope === 'team' && reportConfig.teamId) {
-        const teamUsers = allUsers.filter(user => user.team_id === reportConfig.teamId);
+        const teamUsers = allUsers.filter(user => (user.team_ids || []).includes(reportConfig.teamId));
         const teamUserIds = teamUsers.map(user => user.jira_account_id || user.id);
         filteredRequests = filteredRequests.filter(req => 
           teamUserIds.includes(req.requester_id)
@@ -205,20 +261,19 @@ const AdminManagement = ({ currentUser, showNotification }) => {
           u.jira_account_id === request.requester_id || 
           u.email_address === request.requester_email
         );
-        const team = user ? allTeams.find(t => t.id === user.team_id) : null;
+        const userTeams = user ? allTeams.filter(t => (user.team_ids || []).includes(t.id)) : [];
 
         return {
           'Date': new Date().toLocaleDateString(),
           'Manager': request.manager_name || '',
-          'Team': team?.name || 'Unassigned',
-          'Department': team?.department || '',
+          'Team': userTeams.map(t => t.name).join(', '),
+          'Department': userTeams.length > 0 ? userTeams[0].department : '',
           'User': request.requester_name,
           'Start Date': request.start_date,
           'End Date': request.end_date,
           'Total Days': request.total_days || 0,
           'Leave Type': request.leave_type,
           'Reason': request.reason || '',
-          'Manager Comment': request.reviewer_comments || '',
           'Status': request.status,
           'Submitted Date': request.submitted_at
         };
@@ -260,16 +315,19 @@ const AdminManagement = ({ currentUser, showNotification }) => {
     );
   };
 
-  const stats = {
-    totalAdmins: adminUsers.length,
-    totalTeams: allTeams.length,
-    totalUsers: allUsers.length,
-    totalRequests: allRequests.length,
-    pendingRequests: allRequests.filter(r => r.status === 'pending').length,
-    approvedRequests: allRequests.filter(r => r.status === 'approved').length,
-    declinedRequests: allRequests.filter(r => r.status === 'declined').length,
-    usersNotInSystem: getUsersNotInSystem().length
-  };
+  // Update stats based on current data
+  useEffect(() => {
+    setStats({
+      totalAdmins: adminUsers.length,
+      totalTeams: allTeams.length,
+      totalUsers: allUsers.length,
+      totalRequests: allRequests.length,
+      pendingRequests: allRequests.filter(r => r.status === 'pending').length,
+      approvedRequests: allRequests.filter(r => r.status === 'approved').length,
+      declinedRequests: allRequests.filter(r => r.status === 'declined').length,
+      usersNotInSystem: getUsersNotInSystem()?.length || 0
+    });
+  }, [adminUsers, allTeams, allUsers, allRequests]);
 
   const analytics = {
     requestsByWeekday: allRequests.reduce((acc, req) => {
@@ -296,6 +354,68 @@ const AdminManagement = ({ currentUser, showNotification }) => {
     }, {})
   };
 
+  // When opening the modal, increment the key
+  const openAddPTOModal = () => {
+    setPtoModalKey(Date.now());
+    setShowAddPTOModal(true);
+  };
+
+  // Add CSV export helper
+  function exportToCSV(data, filename) {
+    if (!Array.isArray(data) || data.length === 0) return;
+    const headers = Object.keys(data[0]);
+    const csvRows = [headers.join(',')];
+    for (const row of data) {
+      csvRows.push(headers.map(h => '"' + (row[h] ?? '').toString().replace(/"/g, '""') + '"').join(','));
+    }
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  // Add export handler
+  const handleExportDatabase = async () => {
+    try {
+      const response = await invoke('debugStorage');
+      if (response.success && response.data) {
+        if (response.data.users) exportToCSV(response.data.users, 'users.csv');
+        if (response.data.teams) exportToCSV(response.data.teams, 'teams.csv');
+        if (response.data.admins) exportToCSV(response.data.admins.map(a => ({ accountId: a })), 'admins.csv');
+        if (response.data.pto_requests) exportToCSV(response.data.pto_requests, 'pto_requests.csv');
+        if (response.data.pto_daily_schedules) exportToCSV(response.data.pto_daily_schedules, 'pto_daily_schedules.csv');
+        showNotification('Database exported as CSV files!');
+      } else {
+        showNotification('Failed to export database', 'error');
+      }
+    } catch (err) {
+      showNotification('Failed to export database', 'error');
+    }
+  };
+
+
+
+  const handleExportPTODailySchedules = async () => {
+    try {
+      const response = await invoke('exportPTODailySchedules', { filters: exportFilters });
+      if (response.success) {
+        exportToCSV(response.data, 'pto_daily_schedules.csv');
+        showNotification('Daily schedules exported successfully!');
+        setShowExportModal(false);
+      } else {
+        showNotification(response.message || 'Failed to export daily schedules', 'error');
+      }
+    } catch (error) {
+      showNotification('Failed to export daily schedules', 'error');
+    }
+  };
+
   return (
     <div className="admin-dashboard">
       <div className="admin-tabs">
@@ -305,13 +425,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
         >
           <Shield size={16} />
           Overview
-        </button>
-        <button 
-          className={`admin-tab ${activeTab === 'teams' ? 'active' : ''}`}
-          onClick={() => setActiveTab('teams')}
-        >
-          <Building2 size={16} />
-          Teams
         </button>
         <button 
           className={`admin-tab ${activeTab === 'users' ? 'active' : ''}`}
@@ -387,7 +500,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
             <div className="card-body">
               <div className="admin-actions-grid">
                 <button 
-                  onClick={() => setShowAddPTOModal(true)} 
+                  onClick={openAddPTOModal} 
                   className="admin-action-btn"
                 >
                   <div className="action-icon bg-green">
@@ -422,6 +535,45 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                   <div className="action-content">
                     <div className="action-title">Manage Teams & Users</div>
                     <div className="action-desc">Advanced team and user management</div>
+                  </div>
+                </button>
+
+                <button 
+                  onClick={handleExportDatabase} 
+                  className="admin-action-btn"
+                >
+                  <div className="action-icon bg-yellow">
+                    <Download size={20} />
+                  </div>
+                  <div className="action-content">
+                    <div className="action-title">Export Database</div>
+                    <div className="action-desc">Download all tables as CSV</div>
+                  </div>
+                </button>
+
+                <button 
+                  onClick={() => setShowImportModal(true)} 
+                  className="admin-action-btn"
+                >
+                  <div className="action-icon bg-purple">
+                    <Upload size={20} />
+                  </div>
+                  <div className="action-content">
+                    <div className="action-title">Import PTOs</div>
+                    <div className="action-desc">Import PTO daily schedules from CSV</div>
+                  </div>
+                </button>
+
+                <button 
+                  onClick={() => setShowExportModal(true)} 
+                  className="admin-action-btn"
+                >
+                  <div className="action-icon bg-pink">
+                    <Download size={20} />
+                  </div>
+                  <div className="action-content">
+                    <div className="action-title">Export Daily Schedules</div>
+                    <div className="action-desc">Export PTO daily schedules</div>
                   </div>
                 </button>
               </div>
@@ -471,178 +623,13 @@ const AdminManagement = ({ currentUser, showNotification }) => {
         </div>
       )}
 
-      {activeTab === 'teams' && (
-        <div className="admin-section">
-          <div className="section-header">
-            <h3>Teams Management</h3>
-            <button 
-              onClick={() => setShowTeamManagementModal(true)} 
-              className="btn btn-primary"
-            >
-              <Building2 size={16} />
-              Manage Teams
-            </button>
-          </div>
-
-          <div className="teams-grid">
-            {allTeams.map(team => (
-              <div key={team.id} className="team-card">
-                <div className="team-header">
-                  <div className="team-color" style={{ backgroundColor: team.color }}></div>
-                  <div className="team-info">
-                    <h4>{team.name}</h4>
-                    {team.description && <p>{team.description}</p>}
-                  </div>
-                </div>
-                
-                <div className="team-stats">
-                  <div className="team-stat">
-                    <span className="stat-label">Members:</span>
-                    <span className="stat-value">{team.members?.length || 0}</span>
-                  </div>
-                  <div className="team-stat">
-                    <span className="stat-label">Department:</span>
-                    <span className="stat-value">{team.department || 'N/A'}</span>
-                  </div>
-                  <div className="team-stat">
-                    <span className="stat-label">Lead:</span>
-                    <span className="stat-value">{team.team_lead || 'N/A'}</span>
-                  </div>
-                </div>
-
-                <div className="team-members-preview">
-                  {team.members?.slice(0, 3).map(member => (
-                    <div key={member.id} className="member-avatar">
-                      {member.display_name?.charAt(0) || member.displayName?.charAt(0) || '?'}
-                    </div>
-                  ))}
-                  {team.members?.length > 3 && (
-                    <div className="member-avatar more">+{team.members.length - 3}</div>
-                  )}
-                </div>
-              </div>
-            ))}
-            
-            {allTeams.length === 0 && (
-              <div className="empty-state">
-                <Building2 size={48} />
-                <h4>No Teams Created</h4>
-                <p>Create your first team to organize users.</p>
-                <button 
-                  onClick={() => setShowTeamManagementModal(true)}
-                  className="btn btn-primary"
-                >
-                  Create Team
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {activeTab === 'users' && (
         <div className="admin-section">
-          <div className="section-header">
-            <h3>Users Management</h3>
-            <button 
-              onClick={() => setShowTeamManagementModal(true)} 
-              className="btn btn-primary"
-            >
-              <Users size={16} />
-              Manage Users
-            </button>
-          </div>
-
-          <div className="users-stats-grid">
-            <div className="stat-card stat-blue">
-              <div className="stat-content">
-                <div className="stat-value">{stats.totalUsers}</div>
-                <div className="stat-label">Total Users in System</div>
-              </div>
-            </div>
-            <div className="stat-card stat-orange">
-              <div className="stat-content">
-                <div className="stat-value">{stats.usersNotInSystem}</div>
-                <div className="stat-label">Jira Users Not in System</div>
-              </div>
-            </div>
-          </div>
-
-          {getUsersNotInSystem().length > 0 && (
-            <div className="card users-not-in-system-card">
-              <div className="card-header">
-                <h4>Internal Jira Users Not Added to System</h4>
-                <div className="users-count">
-                  {getUsersNotInSystem().length} users
-                </div>
-              </div>
-              <div className="card-body">
-                <p className="help-text">
-                  These internal Jira users are not added to the PTO system. 
-                  Consider adding them to teams for proper PTO management.
-                </p>
-                <div className="users-not-in-system-list">
-                  {getUsersNotInSystem().slice(0, 10).map(user => (
-                    <div key={user.accountId} className="user-not-in-system-item">
-                      <div className="user-info">
-                        <div className="user-avatar">
-                          {user.displayName?.charAt(0) || '?'}
-                        </div>
-                        <div className="user-details">
-                          <div className="user-name">{user.displayName}</div>
-                          <div className="user-email">{user.emailAddress}</div>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => {
-                          setShowTeamManagementModal(true);
-                        }}
-                        className="btn btn-sm btn-secondary"
-                      >
-                        Add to System
-                      </button>
-                    </div>
-                  ))}
-                  {getUsersNotInSystem().length > 10 && (
-                    <div className="show-more-users">
-                      +{getUsersNotInSystem().length - 10} more users
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="card current-users-card">
-            <div className="card-header">
-              <h4>Current Users in System</h4>
-            </div>
-            <div className="card-body">
-              <div className="users-grid">
-                {allUsers.map(user => {
-                  const userTeam = allTeams.find(team => team.id === user.team_id);
-                  return (
-                    <div key={user.id} className="user-card">
-                      <div className="user-avatar">
-                        {user.display_name?.charAt(0) || user.displayName?.charAt(0) || '?'}
-                      </div>
-                      <div className="user-info">
-                        <div className="user-name">
-                          {user.display_name || user.displayName}
-                        </div>
-                        <div className="user-email">
-                          {user.email_address || user.emailAddress}
-                        </div>
-                        <div className="user-team">
-                          {userTeam ? userTeam.name : 'No Team'}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          <UserPTOManagement
+            currentUser={currentUser}
+            showNotification={showNotification}
+            isAdmin={true}
+          />
         </div>
       )}
 
@@ -780,7 +767,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
               selectedUser={null}
               onSelect={handleAddAdmin}
               placeholder="Search and select user to grant admin privileges"
-              required
+              useBackendSearch={false}
             />
           </div>
         </Modal>
@@ -919,6 +906,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
 
       {showAddPTOModal && (
         <PTOSubmissionModal
+          key={ptoModalKey}
           isAdminMode={true}
           onClose={() => setShowAddPTOModal(false)}
           onSubmit={handleSubmitPTOForUser}
@@ -928,6 +916,107 @@ const AdminManagement = ({ currentUser, showNotification }) => {
           currentUser={currentUser}
           isAdmin={true}
         />
+      )}
+
+      {showImportModal && (
+        <PTOImportModal
+          isOpen={showImportModal}
+          onClose={() => setShowImportModal(false)}
+          currentUser={currentUser}
+          showNotification={showNotification}
+          onImportSuccess={loadAllRequests}
+        />
+      )}
+
+      {showExportModal && (
+        <Modal title="Export PTO Daily Schedules" onClose={() => setShowExportModal(false)}>
+          <div className="export-filters">
+            <div className="form-row">
+              <div className="form-group">
+                <label>Start Date</label>
+                <input
+                  type="date"
+                  value={exportFilters.startDate}
+                  onChange={(e) => setExportFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                  className="form-control"
+                />
+              </div>
+              <div className="form-group">
+                <label>End Date</label>
+                <input
+                  type="date"
+                  value={exportFilters.endDate}
+                  onChange={(e) => setExportFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                  className="form-control"
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>Requester</label>
+              <select
+                value={exportFilters.requesterId}
+                onChange={(e) => setExportFilters(prev => ({ ...prev, requesterId: e.target.value }))}
+                className="form-control"
+              >
+                <option value="">All Requesters</option>
+                {allUsers.map(user => (
+                  <option key={user.id} value={user.jira_account_id || user.id}>
+                    {user.display_name || user.displayName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Manager</label>
+              <select
+                value={exportFilters.managerId}
+                onChange={(e) => setExportFilters(prev => ({ ...prev, managerId: e.target.value }))}
+                className="form-control"
+              >
+                <option value="">All Managers</option>
+                {allUsers.map(user => (
+                  <option key={user.id} value={user.jira_account_id || user.id}>
+                    {user.display_name || user.displayName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label>Leave Type</label>
+              <select
+                value={exportFilters.leaveType}
+                onChange={(e) => setExportFilters(prev => ({ ...prev, leaveType: e.target.value }))}
+                className="form-control"
+              >
+                <option value="">All Types</option>
+                <option value="vacation">Vacation</option>
+                <option value="sick">Sick Leave</option>
+                <option value="personal">Personal Leave</option>
+                <option value="holiday">Holiday</option>
+                <option value="other leave type">Other Leave Type</option>
+              </select>
+            </div>
+
+            <div className="form-actions">
+              <button 
+                onClick={() => setShowExportModal(false)}
+                className="btn btn-secondary"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleExportPTODailySchedules}
+                className="btn btn-primary"
+              >
+                <Download size={16} />
+                Export Schedules
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

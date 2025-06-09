@@ -30,7 +30,16 @@ export const PTO_SCHEMA = {
     pto_request_id: 'string',
     date: 'date',
     schedule_type: 'string', // FULL_DAY, HALF_DAY_MORNING, HALF_DAY_AFTERNOON
+    leave_type: 'string', // vacation, sick, personal, holiday
     hours: 'number', // 8, 4, etc.
+    // Requester info
+    requester_id: 'string',
+    requester_name: 'string',
+    requester_email: 'string',
+    // Manager info
+    manager_id: 'string',
+    manager_name: 'string',
+    manager_email: 'string',
     created_at: 'datetime'
   },
 

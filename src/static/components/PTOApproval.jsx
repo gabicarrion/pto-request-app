@@ -33,14 +33,13 @@ const PTOApproval = () => {
     }
   };
 
-  const handleApproval = async (requestId, isApproved, comment) => {
+  const handleApproval = async (requestId, isApproved) => {
     try {
       await invoke('updatePTORequest', {
         payload: {
           requestId,
           managerEmail,
-          status: isApproved ? 'approved' : 'rejected',
-          comment
+          status: isApproved ? 'approved' : 'rejected'
         }
       });
       
@@ -104,29 +103,15 @@ const PTOApproval = () => {
                 <td className="p-2 border">{request.reason}</td>
                 <td className="p-2 border">
                   <div className="flex flex-col gap-2">
-                    <textarea
-                      className="w-full p-2 border rounded text-sm"
-                      placeholder="Add comment (optional)"
-                      rows="2"
-                      id={`comment-${request.id}`}
-                    />
                     <div className="flex gap-2">
                       <button
-                        onClick={() => handleApproval(
-                          request.id, 
-                          true, 
-                          document.getElementById(`comment-${request.id}`).value
-                        )}
+                        onClick={() => handleApproval(request.id, true)}
                         className="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm"
                       >
                         Approve
                       </button>
                       <button
-                        onClick={() => handleApproval(
-                          request.id, 
-                          false,
-                          document.getElementById(`comment-${request.id}`).value
-                        )}
+                        onClick={() => handleApproval(request.id, false)}
                         className="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
                       >
                         Reject
