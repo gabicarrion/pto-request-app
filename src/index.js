@@ -2186,10 +2186,24 @@ resolver.define('exportPTODailySchedules', async (req) => {
 resolver.define('importPTODailySchedules', async (req) => {
   try {
     const { importData, adminId, skipValidation = false, useStoredValidation = false } = req.payload || {};
-    console.log('📥 Importing PTO daily schedules:', importData?.length, 'records', 
+    const dataLength = importData && Array.isArray(importData) ? importData.length : 0;
+    console.log('📥 Importing PTO daily schedules:', dataLength, 'records', 
       skipValidation ? '(pre-validated)' : '', 
       useStoredValidation ? '(using stored validation)' : ''
     );
+    
+    // Add validation for importData
+    if (!useStoredValidation && (!importData || !Array.isArray(importData) || importData.length === 0)) {
+      return {
+        success: false,
+        message: 'Invalid import data: expected array of PTO records',
+        data: {
+          importedRecords: 0,
+          failedRecords: 0,
+          errors: ['No valid import data provided']
+        }
+      };
+    }
     
     // Verify admin status
     const admins = await storage.get('pto_admins') || [];

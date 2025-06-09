@@ -30,22 +30,24 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
           const rows = csvData.split('\n');
           const headers = rows[0].split(',').map(h => h.trim());
           
-          const parsedData = rows.slice(1)
-            .filter(row => row && row.trim().length > 0) // Skip empty rows
-            .map((row, rowIndex) => {
-              try {
-                const values = row.split(',').map(v => v ? v.trim().replace(/^"|"$/g, '') : ''); // Remove quotes
-                const record = {};
+          const parsedData = rows && rows.length > 1 ? rows.slice(1)
+          .filter(row => row && row.trim().length > 0) // Skip empty rows
+          .map((row, rowIndex) => {
+            try {
+              const values = row && row.split ? row.split(',').map(v => v ? v.trim().replace(/^"|"$/g, '') : '') : []; // Remove quotes
+              const record = {};
+              if (headers && Array.isArray(headers)) {
                 headers.forEach((header, index) => {
                   record[header] = index < values.length ? values[index] : '';
                 });
-                return record;
-              } catch (error) {
-                console.warn(`Error parsing row ${rowIndex + 2}:`, error);
-                return null;
               }
-            })
-            .filter(record => record !== null); // Remove failed parsing attempts
+              return record;
+            } catch (error) {
+              console.warn(`Error parsing row ${rowIndex + 2}:`, error);
+              return null;
+            }
+          })
+          .filter(record => record !== null) : []; // Remove failed parsing attempts
           
           if (parsedData.length === 0) {
             showNotification('No valid data found in CSV file', 'error');
@@ -77,12 +79,16 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
       
       // Only update UI for first batch if not already initialized
       if (batchIndex === 0 && !validationResult?.data?.initializing) {
+        const batchSize = 5;
+        const dataLength = importData && Array.isArray(importData) ? importData.length : 0;
+
+        
         setValidationResult({
           success: true,
           data: {
             isComplete: false,
             currentBatch: 0,
-            totalBatches: Math.ceil(importData.length / BATCH_SIZE),
+            totalBatches: dataLength > 0 ? Math.ceil(dataLength / batchSize) : 0,
             initializing: true,
             validation: {
               validRecords: [],
@@ -488,7 +494,7 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
                 {importFile && (
                   <div className="file-info">
                     <p>Selected file: {importFile.name}</p>
-                    <p>Records found: {importData.length}</p>
+                    <p>Records found: {importData && Array.isArray(importData) ? importData.length : 0}</p>
                   </div>
                 )}
               </div>
@@ -500,7 +506,7 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
               <button 
                 onClick={handleValidateData}
                 className="btn btn-secondary"
-                disabled={!importData.length || isValidating || isImporting}
+                disabled={!importData || !Array.isArray(importData) || importData.length === 0 || isValidating || isImporting}
               >
                 {isValidating ? 'Validating...' : 'Validate Data'}
               </button>

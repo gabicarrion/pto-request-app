@@ -119,9 +119,20 @@ export const importService = {
         errors: ['No valid import data provided']
       };
     }
+    // Ensure importData is a valid array
+    if (!importData || !Array.isArray(importData)) {
+      return {
+        valid: false,
+        totalRecords: 0,
+        validRecords: [],
+        invalidRecords: 0,
+        errors: ['Import data must be an array']
+      };
+    }
+
     for (const [index, record] of importData.entries()) {
       const recordErrors = [];
-      const enhancedRecord = { ...record };
+      const enhancedRecord = record ? { ...record } : {};
       // Check if record exists and is an object
       if (!record || typeof record !== 'object') {
         errors.push({
