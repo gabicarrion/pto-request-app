@@ -1,6 +1,4 @@
-import React, { useState, useEffect
-  
- } from 'react';
+import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import { CheckCircle, AlertTriangle, X } from 'lucide-react';
 
@@ -33,17 +31,21 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
           const headers = rows[0].split(',').map(h => h.trim());
           
           const parsedData = rows.slice(1)
-            .filter(row => row.trim().length > 0) // Skip empty rows
-            .map(row => {
-              const values = row.split(',').map(v => v.trim());
-              const record = {};
-              headers.forEach((header, index) => {
-                if (index < values.length) {
-                  record[header] = values[index];
-                }
-              });
-              return record;
-            });
+            .filter(row => row && row.trim().length > 0) // Skip empty rows
+            .map((row, rowIndex) => {
+              try {
+                const values = row.split(',').map(v => v ? v.trim().replace(/^"|"$/g, '') : ''); // Remove quotes
+                const record = {};
+                headers.forEach((header, index) => {
+                  record[header] = index < values.length ? values[index] : '';
+                });
+                return record;
+              } catch (error) {
+                console.warn(`Error parsing row ${rowIndex + 2}:`, error);
+                return null;
+              }
+            })
+            .filter(record => record !== null); // Remove failed parsing attempts
           
           if (parsedData.length === 0) {
             showNotification('No valid data found in CSV file', 'error');
@@ -74,7 +76,6 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
       const BATCH_SIZE = 5; // Reduced batch size for more frequent updates
       
       // Only update UI for first batch if not already initialized
-      // This prevents flickering between states
       if (batchIndex === 0 && !validationResult?.data?.initializing) {
         setValidationResult({
           success: true,
@@ -106,8 +107,6 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
       });
       
       // Update UI with stable timing - don't update too frequently
-      // Only update every 3 batches or on first/last batch for smoother UI
-      // This reduces flickering and provides more stable feedback
       const shouldUpdateUI = batchIndex === 0 || 
                             validationResponse.data?.isComplete || 
                             batchIndex % 3 === 0 || 
@@ -116,7 +115,6 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
       // Use debounced updates for smoother UI
       if (shouldUpdateUI) {
         // Preserve the initializing state during the first phase
-        // This prevents flickering between different states
         const preserveInitializing = batchIndex === 0 && validationResult?.data?.initializing;
         
         // Create a copy of the response to avoid reference issues
@@ -155,7 +153,6 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
       // Check if we need to process more batches
       if (validationResponse.success && !validationResponse.data?.isComplete) {
         // If this is the first batch with actual user validation, mark the transition
-        // from initializing to user validation phase
         if (batchIndex === 0 && validationResult?.data?.initializing) {
           // Update state to transition from initializing to user validation
           setValidationResult(prevState => ({
@@ -173,7 +170,6 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
         }
         
         // Show progress notification less frequently (every 20 batches)
-        // This prevents too many notifications which can be distracting
         if (batchIndex % 20 === 0 || batchIndex === 0 || batchIndex === validationResponse.data.totalBatches - 1) {
           const progress = validationResponse.data.currentBatch / validationResponse.data.totalBatches * 100;
           const validCount = validationResponse.data.validation?.validRecords?.length || 0;
@@ -191,8 +187,6 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
         // Process next batch
         if (validationResponse.data.currentBatch < validationResponse.data.totalBatches) {
           // Use a longer delay to prevent UI freezing and allow React to update
-          // This creates a more stable experience with less flickering
-          // Use a longer delay for the first few batches to ensure smooth transition
           const nextBatchDelay = (batchIndex < 3) ? 600 : 300; // ms between batches
           
           setTimeout(() => {
@@ -306,7 +300,7 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
   };
 
   const handleImportPTOs = async () => {
-    if (!validationResult || !validationResult.success || !validationResult.data?.isComplete) {
+    if (!validationResult?.success || !validationResult?.data?.validationComplete) {
       showNotification('Please complete validation before importing', 'error');
       return;
     }
@@ -520,7 +514,7 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
                         <div 
                           className="progress-fill" 
                           style={{ 
-                            width: `${Math.round((validationResult.data.currentBatch / validationResult.data.totalBatches) * 100)}%`,
+                            width: `${Math.round(((validationResult.data?.currentBatch || 0) / (validationResult.data?.totalBatches || 1)) * 100)}%`,
                             transition: 'width 0.8s ease-in-out'
                           }}
                         ></div>
@@ -556,7 +550,7 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
                           
                           {/* Progress percentage */}
                           <span className="progress-percentage">
-                            {Math.round((validationResult.data.currentBatch / validationResult.data.totalBatches) * 100)}%
+                            {Math.round(((validationResult.data?.currentBatch || 0) / (validationResult.data?.totalBatches || 1)) * 100)}%
                           </span>
                         </div>
                         
@@ -826,13 +820,13 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
                   <div className="progress-bar">
                     <div 
                       className="progress-fill" 
-                      style={{ width: `${Math.round((importResult.recordsProcessed / importResult.totalRecords) * 100)}%` }}
+                      style={{ width: `${Math.round(((importResult?.recordsProcessed || 0) / (importResult?.totalRecords || 1)) * 100)}%` }}
                     ></div>
                   </div>
                   <div className="progress-stats">
-                    <span>Processing batch {importResult.batchNumber} of {importResult.totalBatches}</span>
-                    <span>{importResult.recordsProcessed} of {importResult.totalRecords} records processed</span>
-                    <span>{importResult.importedRecords} imported, {importResult.failedRecords} failed</span>
+                    <span>Processing batch {importResult?.batchNumber || 1} of {importResult?.totalBatches || 1}</span>
+                    <span>{importResult?.recordsProcessed || 0} of {importResult?.totalRecords || 0} records processed</span>
+                    <span>{importResult?.importedRecords || 0} imported, {importResult?.failedRecords || 0} failed</span>
                   </div>
                 </div>
               )}
@@ -854,15 +848,15 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
                       <div className="import-stats">
                         <div className="stat-item">
                           <span className="stat-label">Total Records:</span>
-                          <span className="stat-value">{importResult.data.totalRecords || 0}</span>
+                          <span className="stat-value">{importResult?.data?.totalRecords || 0}</span>
                         </div>
                         <div className="stat-item">
                           <span className="stat-label">Imported:</span>
-                          <span className="stat-value success">{importResult.data.importedRecords || 0}</span>
+                          <span className="stat-value success">{importResult?.data?.importedRecords || 0}</span>
                         </div>
                         <div className="stat-item">
                           <span className="stat-label">Failed:</span>
-                          <span className="stat-value error">{importResult.data.failedRecords || 0}</span>
+                          <span className="stat-value error">{importResult?.data?.failedRecords || 0}</span>
                         </div>
                       </div>
                       
@@ -948,4 +942,4 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
   );
 };
 
-export default PTOImportModal; 
+export default PTOImportModal;

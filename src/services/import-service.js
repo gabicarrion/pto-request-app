@@ -103,16 +103,35 @@ export const importService = {
       };
     }
     
-    const errors = [];
+    
     const validRecords = [];
     const validLeaveTypes = this.getValidLeaveTypes();
-    
+    const errors = [];
     // Cache for users to avoid redundant lookups
     const userCache = {};
-    
+    // Validate input data
+    if (!Array.isArray(importData) || importData.length === 0) {
+      return {
+        valid: false,
+        totalRecords: 0,
+        validRecords: [],
+        invalidRecords: 0,
+        errors: ['No valid import data provided']
+      };
+    }
     for (const [index, record] of importData.entries()) {
       const recordErrors = [];
       const enhancedRecord = { ...record };
+      // Check if record exists and is an object
+      if (!record || typeof record !== 'object') {
+        errors.push({
+          record: index + 1,
+          errors: ['Invalid record format'],
+          data: record
+        });
+        continue;
+      }
+
       
       // Check required fields
       if (!record.requester_email) {
