@@ -21,22 +21,6 @@ function getDefaultAvailability() {
   ];
 }
 
-// Initialize Team User Service
-resolver.define('initializeTeamUserService', async (req) => {
-  try {
-    await teamUserService.initialize();
-    return {
-      success: true,
-      message: 'Team and User service initialized successfully'
-    };
-  } catch (error) {
-    console.error('❌ Error initializing Team User Service:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to initialize service'
-    };
-  }
-});
 
 // Initialize PTO Database
 resolver.define('initializePTODatabase', async (req) => {
@@ -225,11 +209,6 @@ resolver.define('testConnectivity', async (req) => {
     };
   }
 });
-
-
-
-
-// Simplified getInternalJiraUsers function using only assignable users
 resolver.define('getInternalJiraUsers', async (req) => {
   try {
     const { startAt = 0, maxResults = 50 } = req.payload || {};
@@ -340,11 +319,6 @@ resolver.define('getInternalJiraUsers', async (req) => {
     };
   }
 });
-
-
-
-
-// Store PTO Request
 resolver.define('storePTORequest', async (req) => {
   try {
     console.log('📝 Storing enhanced PTO Request:', req.payload);
@@ -480,14 +454,19 @@ resolver.define('storePTORequest', async (req) => {
     };
   }
 });
-
-// Get PTO Requests
 resolver.define('getPTORequests', async (req) => {
   try {
     const filters = req.payload || {};
     console.log('📋 Getting PTO Requests with filters:', filters);
     
-    const requests = await storage.get('pto_requests') || [];
+    // Use chunked retrieval for requests
+    let requests;
+    try {
+      requests = await importService.getChunkedData('pto_requests') || [];
+    } catch (error) {
+      console.warn('⚠️ Could not load chunked requests, trying direct:', error.message);
+      requests = await storage.get('pto_requests') || [];
+    }
     
     let filteredRequests = requests;
     
@@ -516,9 +495,6 @@ resolver.define('getPTORequests', async (req) => {
     };
   }
 });
-
-
-// Get Pending Requests for Manager
 resolver.define('getPendingRequests', async (req) => {
   try {
     const { managerEmail } = req.payload || {};
@@ -542,8 +518,6 @@ resolver.define('getPendingRequests', async (req) => {
     };
   }
 });
-
-// Update PTO Request Status (Approve/Decline)
 resolver.define('updatePTORequest', async (req) => {
   try {
     const { requestId, status, comment } = req.payload || {};
@@ -580,8 +554,7 @@ resolver.define('updatePTORequest', async (req) => {
     };
   }
 });
-
-// Cancel/Delete PTO Request
+// not being used:
 resolver.define('cancelPTORequest', async (req) => {
   try {
     const { requestId, cancelledBy, reason } = req.payload || {};
@@ -638,8 +611,7 @@ resolver.define('cancelPTORequest', async (req) => {
     };
   }
 });
-
-// Get Teams (for team management)
+//
 resolver.define('getTeams', async (req) => {
   try {
     console.log('👥 Getting teams');
@@ -653,8 +625,6 @@ resolver.define('getTeams', async (req) => {
     };
   }
 });
-
-// Team Management Resolvers
 resolver.define('createTeam', async (req) => {
   try {
     const result = await teamUserService.createTeam(req.payload || {});
@@ -667,7 +637,6 @@ resolver.define('createTeam', async (req) => {
     };
   }
 });
-
 resolver.define('updateTeam', async (req) => {
   try {
     const result = await teamUserService.updateTeam(req.payload || {});
@@ -680,7 +649,6 @@ resolver.define('updateTeam', async (req) => {
     };
   }
 });
-
 resolver.define('deleteTeam', async (req) => {
   try {
     const { teamId, deletedBy } = req.payload || {};
@@ -694,7 +662,7 @@ resolver.define('deleteTeam', async (req) => {
     };
   }
 });
-
+//used in team-user-service.js
 resolver.define('addTeamMember', async (req) => {
   try {
     const { teamId, member } = req.payload || {};
@@ -708,7 +676,6 @@ resolver.define('addTeamMember', async (req) => {
     };
   }
 });
-
 resolver.define('removeTeamMember', async (req) => {
   try {
     const { teamId, memberAccountId, removedBy } = req.payload || {};
@@ -722,8 +689,7 @@ resolver.define('removeTeamMember', async (req) => {
     };
   }
 });
-
-// User Management Resolvers
+//
 resolver.define('getUsers', async (req) => {
   try {
     const result = await teamUserService.getUsers();
@@ -736,7 +702,6 @@ resolver.define('getUsers', async (req) => {
     };
   }
 });
-
 resolver.define('getUserById', async (req) => {
   try {
     const { userId } = req.payload || {};
@@ -750,7 +715,6 @@ resolver.define('getUserById', async (req) => {
     };
   }
 });
-
 resolver.define('getUsersByTeam', async (req) => {
   try {
     const { teamId } = req.payload || {};
@@ -764,7 +728,6 @@ resolver.define('getUsersByTeam', async (req) => {
     };
   }
 });
-
 resolver.define('createUser', async (req) => {
   try {
     const result = await teamUserService.createUser(req.payload || {});
@@ -777,7 +740,6 @@ resolver.define('createUser', async (req) => {
     };
   }
 });
-
 resolver.define('updateUser', async (req) => {
   try {
     const result = await teamUserService.updateUser(req.payload || {});
@@ -790,7 +752,6 @@ resolver.define('updateUser', async (req) => {
     };
   }
 });
-
 resolver.define('deleteUser', async (req) => {
   try {
     const { userId, deletedBy } = req.payload || {};
@@ -804,8 +765,6 @@ resolver.define('deleteUser', async (req) => {
     };
   }
 });
-
-// Get Team PTO Requests
 resolver.define('getTeamPTORequests', async (req) => {
   try {
     const { teamId, dateRange } = req.payload || {};
@@ -818,56 +777,7 @@ resolver.define('getTeamPTORequests', async (req) => {
       message: error.message || 'Failed to get team PTO requests'
     };
   }
-});
-
-// Get PTO Calendar Events
-resolver.define('getPTOCalendarEvents', async (req) => {
-  try {
-    const { startDate, endDate } = req.payload || {};
-    console.log('📅 Getting calendar events from', startDate, 'to', endDate);
-    
-    const requests = await storage.get('pto_requests') || [];
-    
-    // Filter requests that overlap with the requested date range
-    const events = requests
-      .filter(request => request.status === 'approved')
-      .filter(request => {
-        const reqStart = new Date(request.start_date);
-        const reqEnd = new Date(request.end_date);
-        const rangeStart = new Date(startDate);
-        const rangeEnd = new Date(endDate);
-        
-        return reqStart <= rangeEnd && reqEnd >= rangeStart;
-      })
-      .map(request => ({
-        id: request.id,
-        title: `${request.requester_name} - ${request.leave_type}`,
-        start: request.start_date,
-        end: request.end_date,
-        user: {
-          name: request.requester_name,
-          email: request.requester_email,
-          avatarUrl: request.requester_avatar || null
-        },
-        type: request.leave_type,
-        reason: request.reason,
-        status: request.status
-      }));
-    
-    return {
-      success: true,
-      data: events
-    };
-  } catch (error) {
-    console.error('❌ Error getting calendar events:', error);
-    return {
-      success: false,
-      message: 'Failed to get calendar events: ' + error.message
-    };
-  }
-});
-
-// Admin Management Functions
+})
 resolver.define('checkUserAdminStatus', async (req) => {
   try {
     const { accountId } = req.payload || {};
@@ -888,7 +798,6 @@ resolver.define('checkUserAdminStatus', async (req) => {
     };
   }
 });
-
 resolver.define('addAdminUser', async (req) => {
   try {
     const { accountId, addedBy } = req.payload || {};
@@ -923,7 +832,6 @@ resolver.define('addAdminUser', async (req) => {
     };
   }
 });
-
 resolver.define('removeAdminUser', async (req) => {
   try {
     const { accountId, removedBy } = req.payload || {};
@@ -956,7 +864,6 @@ resolver.define('removeAdminUser', async (req) => {
     };
   }
 });
-
 resolver.define('getAdminUsers', async (req) => {
   try {
     console.log('👑 Getting admin users');
@@ -976,8 +883,6 @@ resolver.define('getAdminUsers', async (req) => {
     };
   }
 });
-
-// Enhanced bulk import function
 resolver.define('bulkImportUsersFromJira', async (req) => {
   try {
     const { selectedUserIds, defaultTeamId, defaultDepartment } = req.payload || {};
@@ -1094,8 +999,6 @@ resolver.define('bulkImportUsersFromJira', async (req) => {
     };
   }
 });
-
-// Enhanced createUserFromJira function
 resolver.define('createUserFromJira', async (req) => {
   try {
     const { jiraUser, teamId, additionalData } = req.payload || {};
@@ -1179,8 +1082,6 @@ resolver.define('createUserFromJira', async (req) => {
     };
   }
 });
-
-// Enhanced search function for database users only
 resolver.define('searchDatabaseUsers', async (req) => {
   try {
     const { query, filterBy = 'all', startAt = 0, maxResults = 50 } = req.payload || {};
@@ -1242,10 +1143,6 @@ resolver.define('searchDatabaseUsers', async (req) => {
     };
   }
 });
-
-
-
-
 resolver.define('editPTORequest', async (req) => {
   try {
     const { requestId, updatedData, editedBy } = req.payload || {};
@@ -1368,59 +1265,6 @@ resolver.define('editPTORequest', async (req) => {
     };
   }
 });
-
-
-// In your backend resolver/function
-resolver.define("getProjectUsers", async ({ payload }) => {
-  const { projectKey, maxResults = 1000, getAllPages = true } = payload;
-  console.log(`[Backend] getProjectUsers called for project: ${projectKey}`);
-  
-  try {
-    let allUsers = [];
-    let startAt = 0;
-    const pageSize = 50;
-    let hasMoreUsers = true; // Add this flag instead of checking users.length
-    
-    while (hasMoreUsers && allUsers.length < maxResults) { // Use while instead of do...while
-      console.log(`[Backend] Fetching users from ${startAt} to ${startAt + pageSize}`);
-      
-      const response = await asUser().requestJira(
-        route`/rest/api/3/user/assignable/search?project=${projectKey}&startAt=${startAt}&maxResults=${pageSize}`
-      );
-      
-      if (!response.ok) {
-        throw new Error(`Jira API returned ${response.status}`);
-      }
-      
-      const users = await response.json(); // This is now properly scoped
-      console.log(`[Backend] Got ${users.length} users in this batch`);
-      
-      // Ensure users is an array before concatenating
-      if (Array.isArray(users)) {
-        allUsers = allUsers.concat(users);
-        
-        // Check if we should continue (if we got less than pageSize, we're done)
-        hasMoreUsers = users.length === pageSize && getAllPages;
-      } else {
-        console.warn('[Backend] Jira API returned non-array response:', users);
-        hasMoreUsers = false; // Stop the loop
-      }
-      
-      startAt += pageSize;
-    }
-    
-    console.log(`[Backend] Total users loaded: ${allUsers.length}`);
-    
-    // Always return an array
-    return Array.isArray(allUsers) ? allUsers : [];
-    
-  } catch (error) {
-    console.error(`[Backend] Error fetching project users for ${projectKey}:`, error);
-    // Always return an empty array on error
-    return [];
-  }
-});
-
 resolver.define("getProjectUsersPaginated", async ({ payload }) => {
   const { projectKey, startAt = 0, maxResults = 50 } = payload;
   console.log(`[Backend] getProjectUsersPaginated called for project: ${projectKey}, startAt: ${startAt}, maxResults: ${maxResults}`);
@@ -1458,9 +1302,6 @@ resolver.define("getProjectUsersPaginated", async ({ payload }) => {
     };
   }
 });
-
-
-// Submit PTO request on behalf of another user (Admin only)
 resolver.define('submitPTOForUser', async (req) => {
   try {
     const { requestData, submittedBy } = req.payload;
@@ -1590,8 +1431,6 @@ resolver.define('submitPTOForUser', async (req) => {
     };
   }
 });
-
-// Get user's teams
 resolver.define('getUserTeams', async (req) => {
   try {
     const { userId } = req.payload || {};
@@ -1605,8 +1444,6 @@ resolver.define('getUserTeams', async (req) => {
     };
   }
 });
-
-// Get team analytics
 resolver.define('getTeamAnalytics', async (req) => {
   try {
     const { teamId, dateRange } = req.payload || {};
@@ -1620,167 +1457,6 @@ resolver.define('getTeamAnalytics', async (req) => {
     };
   }
 });
-
-// Auto-setup admin users on first run
-resolver.define('setupDefaultAdmin', async (req) => {
-  try {
-    console.log('🔧 Setting up default admin users...');
-    
-    const admins = await storage.get('pto_admins') || [];
-    const defaultAdminEmail = 'gabriela.carrion@rebelmouse.com';
-    
-    const userSearchResponse = await api.asUser().requestJira(
-      route`/rest/api/3/user/search?query=${defaultAdminEmail}&maxResults=1`
-    );
-    
-    if (userSearchResponse.ok) {
-      const users = await userSearchResponse.json();
-      if (users.length > 0) {
-        const adminAccountId = users[0].accountId;
-        
-        if (!admins.includes(adminAccountId)) {
-          admins.push(adminAccountId);
-          await storage.set('pto_admins', admins);
-          
-          console.log('✅ Default admin added:', defaultAdminEmail, adminAccountId);
-          
-          return {
-            success: true,
-            message: `Default admin ${defaultAdminEmail} added successfully`,
-            data: { adminAccountId, adminEmail: defaultAdminEmail }
-          };
-        } else {
-          return {
-            success: true,
-            message: `${defaultAdminEmail} is already an admin`,
-            data: { adminAccountId, adminEmail: defaultAdminEmail }
-          };
-        }
-      } else {
-        return {
-          success: false,
-          message: `User ${defaultAdminEmail} not found in Jira`
-        };
-      }
-    } else {
-      throw new Error('Failed to search for user');
-    }
-  } catch (error) {
-    console.error('❌ Error setting up default admin:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-
-// Auto-initialize admin on database init
-resolver.define('initializePTODatabaseWithAdmin', async (req) => {
-  try {
-    console.log('🔧 Initializing PTO Database with Admin Setup...');
-    
-    const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances', 'pto_admins'];
-    
-    for (const table of tables) {
-      const existing = await storage.get(table);
-      if (!existing) {
-        await storage.set(table, []);
-        console.log(`✅ Initialized table: ${table}`);
-      }
-    }
-    
-    const admins = await storage.get('pto_admins') || [];
-    const defaultAdminEmail = 'gabriela.carrion@rebelmouse.com';
-    
-    let adminSetupResult = {
-      success: true,
-      message: 'Admin already exists or setup skipped'
-    };
-    
-    try {
-      const userSearchResponse = await api.asUser().requestJira(
-        route`/rest/api/3/user/search?query=${defaultAdminEmail}&maxResults=1`
-      );
-      
-      if (userSearchResponse.ok) {
-        const users = await userSearchResponse.json();
-        if (users.length > 0) {
-          const adminAccountId = users[0].accountId;
-          
-          if (!admins.includes(adminAccountId)) {
-            admins.push(adminAccountId);
-            await storage.set('pto_admins', admins);
-            
-            console.log('✅ Default admin added:', defaultAdminEmail, adminAccountId);
-            adminSetupResult = {
-              success: true,
-              message: `Default admin ${defaultAdminEmail} added successfully`,
-              data: { adminAccountId, adminEmail: defaultAdminEmail }
-            };
-          } else {
-            adminSetupResult = {
-              success: true,
-              message: `${defaultAdminEmail} is already an admin`,
-              data: { adminAccountId, adminEmail: defaultAdminEmail }
-            };
-          }
-        } else {
-          adminSetupResult = {
-            success: false,
-            message: `User ${defaultAdminEmail} not found in Jira`
-          };
-        }
-      } else {
-        adminSetupResult = {
-          success: false,
-          message: 'Failed to search for admin user'
-        };
-      }
-    } catch (adminError) {
-      console.warn('❌ Admin setup failed, but database initialized:', adminError);
-      adminSetupResult = {
-        success: false,
-        message: 'Admin setup failed: ' + adminError.message
-      };
-    }
-    
-    return {
-      success: true,
-      message: 'PTO Database initialized successfully',
-      data: {
-        database: { success: true, message: 'Database tables initialized' },
-        admin: adminSetupResult
-      }
-    };
-  } catch (error) {
-    console.error('❌ Database and admin initialization failed:', error);
-    
-    try {
-      const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances', 'pto_admins'];
-      for (const table of tables) {
-        const existing = await storage.get(table);
-        if (!existing) {
-          await storage.set(table, []);
-        }
-      }
-      
-      return {
-        success: true,
-        message: 'Database initialized, but admin setup failed: ' + error.message,
-        data: {
-          database: { success: true },
-          admin: { success: false, message: error.message }
-        }
-      };
-    } catch (fallbackError) {
-      return {
-        success: false,
-        message: 'Complete initialization failed: ' + fallbackError.message
-      };
-    }
-  }
-});
-
 resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
   try {
     console.log('🔧 Initializing PTO Database with Enhanced Team Management...');
@@ -1857,9 +1533,6 @@ resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
     };
   }
 });
-
-
-// Debug function to check storage
 resolver.define('debugStorage', async (req) => {
   try {
     console.log('🔍 Debugging storage state');
@@ -1902,7 +1575,7 @@ resolver.define('debugStorage', async (req) => {
   }
 });
 
-// Admin PTO Management Functions
+// not being used:
 resolver.define('adminEditPTORequest', async (req) => {
   try {
     const { requestId, updatedData, adminId } = req.payload || {};
@@ -2000,6 +1673,7 @@ resolver.define('adminEditPTORequest', async (req) => {
   }
 });
 
+
 resolver.define('adminDeletePTORequest', async (req) => {
   try {
     const { requestId, adminId, reason } = req.payload || {};
@@ -2051,97 +1725,6 @@ resolver.define('adminDeletePTORequest', async (req) => {
     };
   }
 });
-
-// Import PTOs from CSV
-resolver.define('importPTOs', async (req) => {
-  try {
-    const { ptoData } = req.payload || {};
-    console.log('📥 Importing PTO data:', ptoData.length, 'records');
-
-    if (!Array.isArray(ptoData)) {
-      throw new Error('Invalid data format: expected array of PTO records');
-    }
-
-    const requests = await storage.get('pto_requests') || [];
-    const dailySchedules = await storage.get('pto_daily_schedules') || [];
-    const importedRequests = [];
-    const importedSchedules = [];
-
-    for (const pto of ptoData) {
-      // Generate new IDs for the request
-      const requestId = `pto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
-      // Create the PTO request
-      const newRequest = {
-        id: requestId,
-        requester_id: pto.requester_id,
-        requester_name: pto.requester_name,
-        requester_email: pto.requester_email,
-        manager_id: pto.manager_id,
-        manager_name: pto.manager_name,
-        manager_email: pto.manager_email,
-        start_date: pto.start_date,
-        end_date: pto.end_date,
-        leave_type: pto.leave_type || 'vacation',
-        reason: pto.reason || 'Imported PTO',
-        status: pto.status || 'approved',
-        total_days: pto.total_days,
-        total_hours: pto.total_hours,
-        submitted_at: pto.submitted_at || new Date().toISOString(),
-        reviewed_at: pto.reviewed_at || new Date().toISOString(),
-        reviewer_comments: pto.reviewer_comments || 'Imported PTO',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-      requests.push(newRequest);
-      importedRequests.push(newRequest);
-
-      // Create daily schedules if provided
-      if (pto.daily_schedules && Array.isArray(pto.daily_schedules)) {
-        for (const schedule of pto.daily_schedules) {
-          const scheduleRecord = {
-            id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            pto_request_id: requestId,
-            date: schedule.date,
-            schedule_type: schedule.schedule_type || 'FULL_DAY',
-            leave_type: schedule.leave_type || pto.leave_type || 'vacation',
-            hours: schedule.hours || (schedule.schedule_type === 'FULL_DAY' ? 8 : 4),
-            requester_id: pto.requester_id,
-            requester_name: pto.requester_name,
-            requester_email: pto.requester_email,
-            manager_id: pto.manager_id,
-            manager_name: pto.manager_name,
-            manager_email: pto.manager_email,
-            created_at: new Date().toISOString()
-          };
-          dailySchedules.push(scheduleRecord);
-          importedSchedules.push(scheduleRecord);
-        }
-      }
-    }
-
-    // Save all changes
-    await storage.set('pto_requests', requests);
-    await storage.set('pto_daily_schedules', dailySchedules);
-
-    return {
-      success: true,
-      data: {
-        importedRequests: importedRequests.length,
-        importedSchedules: importedSchedules.length
-      },
-      message: `Successfully imported ${importedRequests.length} PTO requests and ${importedSchedules.length} daily schedules`
-    };
-  } catch (error) {
-    console.error('❌ Error importing PTOs:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to import PTOs'
-    };
-  }
-});
-
-// Export PTO Daily Schedules
 resolver.define('exportPTODailySchedules', async (req) => {
   try {
     const { filters } = req.payload || {};
@@ -2181,29 +1764,15 @@ resolver.define('exportPTODailySchedules', async (req) => {
     };
   }
 });
-
-// Import PTO Daily Schedules from CSV
+// Import PTO Daily Schedules from CSV - CHUNKED VERSION
 resolver.define('importPTODailySchedules', async (req) => {
   try {
     const { importData, adminId, skipValidation = false, useStoredValidation = false } = req.payload || {};
-    const dataLength = importData && Array.isArray(importData) ? importData.length : 0;
-    console.log('📥 Importing PTO daily schedules:', dataLength, 'records', 
-      skipValidation ? '(pre-validated)' : '', 
-      useStoredValidation ? '(using stored validation)' : ''
-    );
     
-    // Add validation for importData
-    if (!useStoredValidation && (!importData || !Array.isArray(importData) || importData.length === 0)) {
-      return {
-        success: false,
-        message: 'Invalid import data: expected array of PTO records',
-        data: {
-          importedRecords: 0,
-          failedRecords: 0,
-          errors: ['No valid import data provided']
-        }
-      };
-    }
+    console.log('📥 CHUNKED: Importing PTO daily schedules', 
+      useStoredValidation ? '(using stored validation)' : 
+      skipValidation ? '(pre-validated)' : ''
+    );
     
     // Verify admin status
     const admins = await storage.get('pto_admins') || [];
@@ -2211,39 +1780,46 @@ resolver.define('importPTODailySchedules', async (req) => {
       throw new Error('Unauthorized: Admin privileges required');
     }
     
-    // Set a longer timeout for large imports
-    const startTime = Date.now();
-    const TIMEOUT_THRESHOLD = 20000; // 20 seconds, leaving 5 seconds buffer for Forge's 25s limit
-    
     let dataToImport;
-    let result;
     
     // Check if we should use the stored validation data
     if (useStoredValidation) {
-      // Get the stored validation data
-      const storedValidation = await storage.get(`pto_import_validation_${adminId}`);
-      
-      if (!storedValidation || !storedValidation.validRecords || !storedValidation.preparedForImport) {
-        throw new Error('No prepared validation data found. Please validate the data first.');
+      try {
+        // Get the stored validation data using chunked retrieval
+        const validationKey = `pto_import_validation_${adminId}`;
+        const storedValidation = await importService.getChunkedData(validationKey);
+        
+        if (!storedValidation || !storedValidation.validRecords || !storedValidation.preparedForImport) {
+          throw new Error('No prepared validation data found. Please validate the data first.');
+        }
+        
+        console.log(`📦 Using chunked validation with ${storedValidation.validRecords.length} prepared records`);
+        dataToImport = storedValidation.validRecords;
+        
+      } catch (retrievalError) {
+        console.error('❌ Failed to retrieve stored validation:', retrievalError);
+        throw new Error(`Could not retrieve validation data: ${retrievalError.message}`);
       }
-      
-      console.log(`Using stored validation with ${storedValidation.validRecords.length} prepared records`);
-      dataToImport = storedValidation.validRecords;
-      
-      // Use the import service to handle the import with the prepared data
-      result = await importService.importPTODailySchedules(dataToImport, true);
-      
-      // Clean up stored validation after successful import
-      await storage.delete(`pto_import_validation_${adminId}`);
     } else {
       // Use the provided import data
       if (!Array.isArray(importData) || importData.length === 0) {
         throw new Error('Invalid data format: expected array of PTO records');
       }
-      
       dataToImport = importData;
-      // Use the import service to handle the import
-      result = await importService.importPTODailySchedules(dataToImport, skipValidation);
+    }
+    
+    // Use the import service to handle the import with the prepared data
+    const result = await importService.importPTODailySchedules(dataToImport, true);
+    
+    // Clean up stored validation after successful import
+    if (useStoredValidation) {
+      try {
+        const validationKey = `pto_import_validation_${adminId}`;
+        await importService.deleteChunkedData(validationKey);
+        console.log('✅ Cleaned up stored validation data');
+      } catch (cleanupError) {
+        console.warn('⚠️ Could not clean up validation data:', cleanupError.message);
+      }
     }
     
     // Log the import activity
@@ -2256,9 +1832,8 @@ resolver.define('importPTODailySchedules', async (req) => {
         total: dataToImport.length,
         imported: result.data?.importedRecords || 0,
         failed: result.data?.failedRecords || 0,
-        processingTime: Date.now() - startTime,
-        skipValidation,
-        useStoredValidation
+        useStoredValidation,
+        chunkedStorage: true
       }
     });
     await storage.set('pto_admin_log', adminLog);
@@ -2268,13 +1843,12 @@ resolver.define('importPTODailySchedules', async (req) => {
     console.error('❌ Error importing PTO daily schedules:', error);
     return {
       success: false,
-      message: error.message || 'Failed to import PTO daily schedules. For large imports, try importing in smaller batches of 20-50 records at a time.',
+      message: error.message || 'Failed to import PTO daily schedules.',
       error: error.toString()
     };
   }
 });
-
-// Check PTO Import Status
+// Check PTO Import Status - not being used:
 resolver.define('checkPTOImportStatus', async (req) => {
   try {
     const { adminId } = req.payload || {};
@@ -2313,359 +1887,227 @@ resolver.define('checkPTOImportStatus', async (req) => {
   }
 });
 
-// Validate PTO Import Data
 resolver.define('validatePTOImportData', async (req) => {
   try {
-    console.log('🔍 Starting PTO import validation with existing user database...');
-    const { importData, adminId } = req.payload;
-    console.log(`📊 Processing ${importData.length} PTO records`);
+    const { importData, adminId, checkJiraUsers = true, batchIndex = 0, batchSize = 50 } = req.payload;
     
-    // Verify admin status
+    // Admin verification
     const admins = await storage.get('pto_admins') || [];
     if (!admins.includes(adminId)) {
       throw new Error('Unauthorized: Admin privileges required');
     }
     
-    // Load existing user database
-    console.log('📋 Loading existing user database...');
-    const users = await storage.get('users') || [];
-    console.log(`💾 User database loaded: ${users.length} users`);
+    console.log(`🔍 CHUNKED: Validating batch ${batchIndex} (${importData.length} records)`);
     
-    if (users.length === 0) {
+    // For first batch, do complete validation setup
+    if (batchIndex === 0 && Array.isArray(importData) && importData.length > 0) {
+      
+      // STEP 1: Basic format validation (fast)
+      console.log('📋 Step 1: Basic format validation...');
+      const basicValidation = await importService.validateImportData(importData, false);
+      if (!basicValidation.valid) {
+        return {
+          success: false,
+          data: {
+            validation: basicValidation,
+            isComplete: true
+          },
+          message: `Basic validation failed: ${basicValidation.errors.length} format errors`
+        };
+      }
+      
+      // STEP 2: User database lookup (optimized)
+      console.log('👥 Step 2: User database validation...');
+      const users = await storage.get('users') || [];
+      
+      if (users.length === 0) {
+        return {
+          success: false,
+          message: 'User database is empty. Please import users from Jira first.',
+          data: { validation: { errors: ['No users in database'] }, isComplete: true }
+        };
+      }
+      
+      // Create email lookup map
+      const emailToUserMap = {};
+      users.forEach(user => {
+        const email = user.email_address || user.emailAddress;
+        if (email) {
+          emailToUserMap[email.toLowerCase()] = {
+            accountId: user.jira_account_id || user.accountId,
+            displayName: user.display_name || user.displayName,
+            emailAddress: email
+          };
+        }
+      });
+      
+      // STEP 3: Enhanced validation with user data
+      console.log('🔄 Step 3: Enhanced validation with user lookup...');
+      const enhancedRecords = [];
+      const finalErrors = [];
+      
+      for (let i = 0; i < basicValidation.validRecords.length; i++) {
+        const record = basicValidation.validRecords[i];
+        
+        // Look up requester
+        const requester = emailToUserMap[record.requester_email.toLowerCase()];
+        if (!requester) {
+          finalErrors.push({
+            record: i + 1,
+            errors: [`Requester not found in database: ${record.requester_email}`],
+            data: record
+          });
+          continue;
+        }
+        
+        // Look up manager (optional - use system default if not found)
+        const manager = emailToUserMap[record.manager_email?.toLowerCase()] || {
+          accountId: 'system-manager',
+          displayName: 'System Manager',
+          emailAddress: record.manager_email || 'system@company.com'
+        };
+        
+        // Create import-ready record
+        enhancedRecords.push({
+          ...record,
+          // Enhanced with user data
+          requester_id: requester.accountId,
+          requester_name: requester.displayName,
+          requester_email: requester.emailAddress,
+          manager_id: manager.accountId,
+          manager_name: manager.displayName,
+          manager_email: manager.emailAddress,
+          // Import metadata
+          import_source: 'csv_bulk_import',
+          import_timestamp: new Date().toISOString(),
+          hours: record.hours || (record.schedule_type === 'HALF_DAY' ? 4 : 8)
+        });
+      }
+      
+      // Store validated data using CHUNKED storage to handle large datasets
+      const validationKey = `pto_import_validation_${adminId}`;
+      const validationData = {
+        validRecords: enhancedRecords,
+        preparedForImport: true,
+        timestamp: new Date().toISOString(),
+        totalRecords: importData.length,
+        errors: finalErrors
+      };
+
+      let storeResult;
+      try {
+        // Use chunked storage for large datasets
+        storeResult = await importService.storeChunkedData(validationKey, validationData);
+        console.log(`✅ Stored validation data: ${storeResult.chunks} chunks, ${storeResult.totalSize} chars`);
+      } catch (storageError) {
+        console.error('❌ Failed to store validation data:', storageError);
+        return {
+          success: false,
+          message: `Failed to store validation data: ${storageError.message}. Dataset may be too large.`,
+          data: { validation: { errors: [storageError.message] }, isComplete: true }
+        };
+      }
+      
+      console.log(`✅ CHUNKED Validation complete: ${enhancedRecords.length} ready, ${finalErrors.length} errors`);
+      
       return {
-        success: false,
-        message: 'User database is empty. Please import users from Jira first.',
-        action: 'IMPORT_USERS_FIRST'
+        success: true,
+        data: {
+          isComplete: true,
+          validationComplete: true,
+          validation: {
+            totalRecords: importData.length,
+            validRecords: enhancedRecords.slice(0, 10), // Only return first 10 for preview
+            validRecordsCount: enhancedRecords.length, // Full count
+            invalidRecords: finalErrors.length,
+            errors: finalErrors.slice(0, 20), // Limit errors in response
+            chunkedStorage: true,
+            chunks: storeResult ? storeResult.chunks : 1
+          }
+        },
+        message: `Validation complete: ${enhancedRecords.length} records ready for import (stored in ${storeResult ? storeResult.chunks : 1} chunks)`
       };
     }
     
-    // Create email lookup map from your existing database
-    const emailToUserMap = {};
-    let usersWithEmails = 0;
-    
-    for (const user of users) {
-      const email = user.email_address || user.emailAddress;
-      
-      if (email) {
-        emailToUserMap[email.toLowerCase()] = {
-          id: user.id,
-          accountId: user.jira_account_id || user.accountId,
-          displayName: user.display_name || user.displayName || `${user.first_name} ${user.last_name}`.trim(),
-          firstName: user.first_name,
-          lastName: user.last_name,
-          emailAddress: email,
-          avatarUrl: user.avatar_url || user.avatarUrls?.['48x48'] || '',
-          active: user.status === 'active',
-          teamIds: user.team_ids || user.team_id ? [user.team_id] : [] // Handle both single and multiple teams
-        };
-        usersWithEmails++;
-      }
-    }
-    
-    console.log(`📧 Created email lookup map: ${usersWithEmails} users with emails`);
-    
-    const processedRecords = [];
-    const errors = [];
-    const warnings = [];
-    const uniqueEmails = [...new Set(importData.map(row => row.requester_email))].filter(Boolean);
-    
-    console.log(`👥 Found ${uniqueEmails.length} unique user emails in import data`);
-    
-    // Check email matches
-    let foundInDatabase = 0;
-    let notFoundEmails = [];
-    
-    for (const email of uniqueEmails) {
-      if (emailToUserMap[email.toLowerCase()]) {
-        foundInDatabase++;
-      } else {
-        notFoundEmails.push(email);
-      }
-    }
-    
-    console.log(`✅ Users found in database: ${foundInDatabase}/${uniqueEmails.length}`);
-    console.log(`❌ Users NOT found: ${notFoundEmails.length}/${uniqueEmails.length}`);
-    if (notFoundEmails.length > 0) {
-      console.log(`❌ Missing emails:`, notFoundEmails.slice(0, 10)); // Show first 10
-    }
-    
-    // Process all records
-    console.log('🔄 Processing import records...');
-    
-    for (let i = 0; i < importData.length; i++) {
-      const row = importData[i];
-      
-      try {
-        // Validate required fields
-        if (!row.requester_email || !row.date || !row.leave_type) {
-          errors.push({
-            row: i + 1,
-            email: row.requester_email,
-            error: `Missing required fields: ${!row.requester_email ? 'email ' : ''}${!row.date ? 'date ' : ''}${!row.leave_type ? 'leave_type' : ''}`
-          });
-          continue;
-        }
-        
-        // Validate date
-        const date = new Date(row.date);
-        if (isNaN(date.getTime())) {
-          errors.push({
-            row: i + 1,
-            email: row.requester_email,
-            error: `Invalid date format: ${row.date}`
-          });
-          continue;
-        }
-        
-        // Validate leave type
-        const validLeaveTypes = ['vacation', 'sick', 'personal', 'holiday', 'other leave type'];
-        if (!validLeaveTypes.includes(row.leave_type?.toLowerCase())) {
-          errors.push({
-            row: i + 1,
-            email: row.requester_email,
-            error: `Invalid leave type: ${row.leave_type}. Must be: ${validLeaveTypes.join(', ')}`
-          });
-          continue;
-        }
-        
-        // Get user from database
-        const user = emailToUserMap[row.requester_email.toLowerCase()];
-        if (!user) {
-          errors.push({
-            row: i + 1,
-            email: row.requester_email,
-            error: `User not found in database: ${row.requester_email}`
-          });
-          continue;
-        }
-        
-        // Validate hours
-        const hours = parseFloat(row.hours) || 8;
-        if (hours < 0 || hours > 24) {
-          warnings.push({
-            row: i + 1,
-            email: row.requester_email,
-            warning: `Unusual hours value: ${hours}. Using anyway.`
-          });
-        }
-        
-        // Create processed record ready for import
-        const processedRecord = {
-          // Original data for reference
-          original: {
-            requester_email: row.requester_email,
-            manager_email: row.manager_email,
-            leave_type: row.leave_type,
-            date: row.date,
-            status: row.status,
-            schedule_type: row.schedule_type,
-            hours: row.hours
-          },
-          
-          // Complete import-ready data with user database info
-          importReady: {
-            id: `pto_import_${Date.now()}_${i}`,
-            // User information from database
-            user_id: user.id,
-            requester_id: user.accountId,
-            requester_name: user.displayName,
-            requester_email: user.emailAddress,
-            requester_avatar: user.avatarUrl,
-            first_name: user.firstName,
-            last_name: user.lastName,
-            team_ids: user.teamIds, // Array of team IDs
-            primary_team_id: user.teamIds && user.teamIds.length > 0 ? user.teamIds[0] : null, // First team as primary
-            // Manager information
-            manager_email: row.manager_email || 'admin@system.com',
-            // PTO details
-            date: date.toISOString().split('T')[0],
-            leave_type: row.leave_type.toLowerCase(),
-            status: row.status || 'approved',
-            schedule_type: row.schedule_type || 'FULL_DAY',
-            hours: hours,
-            reason: row.reason || 'Imported from CSV',
-            // Import metadata
-            import_source: 'csv_bulk_import',
-            imported_by: adminId,
-            import_timestamp: new Date().toISOString(),
-            row_number: i + 1,
-            // Calculated fields
-            year: date.getFullYear(),
-            month: date.getMonth() + 1,
-            day_of_week: date.getDay(),
-            is_weekend: date.getDay() === 0 || date.getDay() === 6
-          },
-          
-          // Validation status
-          status: 'ready',
-          errors: [],
-          warnings: []
-        };
-        
-        processedRecords.push(processedRecord);
-        
-      } catch (error) {
-        errors.push({
-          row: i + 1,
-          email: row.requester_email || 'unknown',
-          error: `Processing error: ${error.message}`
-        });
-      }
-      
-      // Progress logging
-      if ((i + 1) % 500 === 0) {
-        console.log(`📈 Processed ${i + 1}/${importData.length} records...`);
-      }
-    }
-    
-    const successCount = processedRecords.length;
-    const errorCount = errors.length;
-    const warningCount = warnings.length;
-    
-    console.log(`✅ Processing complete:`);
-    console.log(`   📊 ${successCount} records ready for import`);
-    console.log(`   ✅ ${foundInDatabase} users found in database`);
-    console.log(`   ❌ ${notFoundEmails.length} users missing from database`);
-    console.log(`   ⚠️ ${warningCount} warnings`);
-    console.log(`   ❌ ${errorCount} errors`);
-    
-    // Log error breakdown for debugging
-    const errorBreakdown = {};
-    errors.forEach(error => {
-      const errorType = error.error.split(':')[0];
-      errorBreakdown[errorType] = (errorBreakdown[errorType] || 0) + 1;
-    });
-    console.log('🔍 Error breakdown:', errorBreakdown);
-    
-    // Log sample errors
-    if (errors.length > 0) {
-      console.log('🔍 Sample errors:', errors.slice(0, 5));
-    }
-    
+    // For non-zero batch index, return stored progress
     return {
       success: true,
       data: {
-        processedRecords,
-        errors,
-        warnings,
-        missingUsers: notFoundEmails,
-        summary: {
-          total: importData.length,
-          ready: successCount,
-          usersFound: foundInDatabase,
-          usersMissing: notFoundEmails.length,
-          errors: errorCount,
-          warnings: warningCount,
-          canProceedWithImport: successCount > 0,
-          nextSteps: [
-            `${successCount} records are ready for immediate import`,
-            `${notFoundEmails.length} users need to be added to database first`,
-            `${errorCount} records have validation errors that need fixing`
-          ]
-        },
-        // Enhanced preview showing complete user info from database
-        preview: processedRecords.slice(0, 10).map(r => ({
-          row: r.importReady.row_number,
-          userName: r.importReady.requester_name,
-          email: r.importReady.requester_email,
-          userId: r.importReady.user_id,
-          jiraId: r.importReady.requester_id,
-          teamIds: r.importReady.team_ids, // Array of teams
-          primaryTeam: r.importReady.primary_team_id, // Primary team
-          date: r.importReady.date,
-          leaveType: r.importReady.leave_type,
-          hours: r.importReady.hours,
-          status: r.importReady.status
-        })),
-        // List of users that need to be imported to database
-        usersToImport: notFoundEmails.length > 0 ? {
-          emails: notFoundEmails,
-          message: `These ${notFoundEmails.length} users need to be imported from Jira first`,
-          suggestedAction: "Use the 'Import Users from Jira' function to add these users to your database"
-        } : null
-      }
+        isComplete: false,
+        currentBatch: batchIndex,
+        totalBatches: Math.ceil(importData.length / batchSize)
+      },
+      message: 'Batch validation in progress...'
     };
     
   } catch (error) {
-    console.error('❌ Error validating import data:', error);
+    console.error('❌ Validation error:', error);
     return {
       success: false,
-      message: error.message,
-      stack: error.stack
+      message: 'Validation failed: ' + error.message,
+      data: { validation: { errors: [error.message] }, isComplete: true }
     };
   }
 });
 
-// Bulk import resolver
-resolver.define('bulkImportPTORequests', async (req) => {
-  try {
-    const { validatedData, currentUser } = req.payload;
-    console.log(`📥 Bulk importing ${validatedData.length} PTO requests`);
-    
-    // Verify admin status
-    const admins = await storage.get('pto_admins') || [];
-    if (!admins.includes(currentUser.accountId)) {
-      throw new Error('Unauthorized: Admin privileges required');
-    }
-    
-    const results = {
-      total: validatedData.length,
-      successful: 0,
-      failed: 0,
-      errors: []
-    };
-    
-    for (let i = 0; i < validatedData.length; i++) {
-      const record = validatedData[i];
-      
-      try {
-        const response = await invoke('submitPTOForUser', {
-          requestData: record,
-          submittedBy: currentUser.accountId
-        });
-        
-        if (response.success) {
-          results.successful++;
-        } else {
-          results.failed++;
-          results.errors.push(`Record ${i + 1}: ${response.message}`);
-        }
-      } catch (error) {
-        results.failed++;
-        results.errors.push(`Record ${i + 1}: ${error.message}`);
-      }
-    }
-    
-    console.log(`✅ Bulk import complete: ${results.successful} successful, ${results.failed} failed`);
-    
-    return {
-      success: true,
-      data: results,
-      message: `Import complete: ${results.successful} successful, ${results.failed} failed`
-    };
-  } catch (error) {
-    console.error('❌ Error bulk importing PTO requests:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-
-// Clear import validation data
+// Clear import validation data - CHUNKED VERSION
 resolver.define('clearImportValidationData', async (req) => {
   try {
-    console.log('🧹 Clearing import validation data');
-    const result = await importService.clearValidationData();
+    const { adminId } = req.payload || {};
+    console.log('🧹 Clearing CHUNKED validation data, adminId:', adminId);
+    
+    // Validate adminId is a string
+    if (!adminId || typeof adminId !== 'string') {
+      console.warn('⚠️ Invalid adminId provided:', adminId, 'type:', typeof adminId);
+      // Still try to clear general validation data
+      const result = await importService.clearValidationData();
+      return {
+        success: true,
+        message: 'General validation data cleared (adminId was invalid)',
+        data: result
+      };
+    }
+    
+    // List of possible chunked storage keys to clean up
+    const chunkedKeysToClean = [
+      `temp_import_data_${adminId}`,
+      `temp_validation_${adminId}`,
+      `pto_import_validation_${adminId}`
+    ];
+    
+    let totalDeleted = 0;
+    const errors = [];
+    
+    // Clean chunked data
+    for (const key of chunkedKeysToClean) {
+      try {
+        const result = await importService.deleteChunkedData(key);
+        totalDeleted += result.deletedCount || 0;
+        console.log(`✅ Cleaned chunked data: ${key} (${result.deletedCount} entries)`);
+      } catch (deleteError) {
+        console.warn(`⚠️ Could not delete chunked data ${key}:`, deleteError.message);
+        errors.push(`${key}: ${deleteError.message}`);
+      }
+    }
+    
+    // Also clear via import service
+    const serviceResult = await importService.clearValidationData();
+    totalDeleted += serviceResult.deletedCount || 0;
+    
     return {
       success: true,
-      message: 'Import validation data cleared successfully'
+      message: `Cleared ${totalDeleted} storage entries. ${errors.length > 0 ? `Some keys had issues: ${errors.length}` : ''}`,
+      data: {
+        totalDeleted,
+        errors: errors.length > 0 ? errors : undefined,
+        serviceResult
+      }
     };
   } catch (error) {
-    console.error('❌ Error clearing import validation data:', error);
+    console.error('❌ Error clearing chunked validation data:', error);
     return {
       success: false,
-      message: 'Failed to clear import validation data: ' + error.message
+      message: 'Failed to clear validation data: ' + error.message
     };
   }
 });

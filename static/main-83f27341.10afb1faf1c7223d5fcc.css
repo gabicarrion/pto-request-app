@@ -1861,3 +1861,247 @@ main {
     line-height: 1.4;
   }
 }
+
+/* PTO Management App Root */
+.pto-management-app {
+  min-height: 100vh;
+  background: #f9fafb;
+  font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+/* App Header */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 1rem 2rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.app-header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+/* View As Controls */
+.view-as-controls {
+  min-width: 220px;
+  margin-right: 1rem;
+}
+.view-as-banner {
+  background: #ede9fe;
+  color: #6d28d9;
+  padding: 0.25rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-right: 1rem;
+}
+
+/* Admin/Manager Badges */
+.badge-admin {
+  background: #ede9fe;
+  color: #8b5cf6;
+  border-radius: 999px;
+  padding: 0.15em 0.7em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-left: 0.5em;
+}
+.badge-manager {
+  background: #fff7ed;
+  color: #f97316;
+  border-radius: 999px;
+  padding: 0.15em 0.7em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-left: 0.5em;
+}
+
+/* ===== OPTIMIZED IMPORT MODAL STYLES ===== */
+.validation-spinner-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.validation-spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid #e2e8f0;
+  border-top: 3px solid #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+.validation-message h5 {
+  margin: 0 0 0.5rem 0;
+  color: #1f2937;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.validation-message p {
+  margin: 0 0 0.75rem 0;
+  color: #6b7280;
+  font-size: 0.875rem;
+}
+
+.validation-stats {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: #9ca3af;
+}
+
+.validation-summary {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #f9fafb;
+  border-radius: 6px;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem;
+  background: white;
+  border-radius: 4px;
+  border: 1px solid #e5e7eb;
+}
+
+.summary-label {
+  font-size: 0.875rem;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.summary-value {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.summary-value.success {
+  color: #059669;
+}
+
+.summary-value.error {
+  color: #dc2626;
+}
+
+.error-list {
+  max-height: 200px;
+  overflow-y: auto;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.error-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 0.875rem;
+}
+
+.error-item:last-child {
+  border-bottom: none;
+}
+
+.error-record {
+  font-weight: 600;
+  color: #dc2626;
+  min-width: 60px;
+}
+
+.error-message {
+  color: #374151;
+  flex: 1;
+}
+
+.error-email {
+  color: #6b7280;
+  font-style: italic;
+}
+
+.error-more {
+  padding: 0.5rem;
+  text-align: center;
+  color: #6b7280;
+  font-style: italic;
+  font-size: 0.875rem;
+}
+
+.import-step h4 {
+  color: #1f2937;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.import-step h4:before {
+  content: counter(step-counter);
+  counter-increment: step-counter;
+  background: #3b82f6;
+  color: white;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.import-pto-content {
+  counter-reset: step-counter;
+}
+
+/* Responsive improvements */
+@media (max-width: 768px) {
+  .summary-grid {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+  
+  .validation-spinner-container {
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .error-item {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+}

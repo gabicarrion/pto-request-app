@@ -122,263 +122,135 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
 
   const validateBatch = async (batchIndex = 0) => {
     try {
-      // Use a smaller batch size for Jira user validation
-      const BATCH_SIZE = 5; // Reduced batch size for more frequent updates
+      console.log(`🔍 Frontend: Starting validation batch ${batchIndex}`);
       
-      // Only update UI for first batch if not already initialized
-      if (batchIndex === 0 && !validationResult?.data?.initializing) {
-        const batchSize = 5;
-        const dataLength = importData && Array.isArray(importData) ? importData.length : 0;
-
-        
-        setValidationResult({
-          success: true,
-          data: {
-            isComplete: false,
-            currentBatch: 0,
-            totalBatches: dataLength > 0 ? Math.ceil(dataLength / batchSize) : 0,
-            initializing: true,
-            validation: {
-              validRecords: [],
-              invalidRecords: 0
-            }
-          },
-          message: "Starting validation and preparing data for import..."
-        });
-        
-        // Give UI time to update before starting the first batch
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      
-      // Validate the current batch and prepare data for import
-      const validationResponse = await invoke('validatePTOImportData', { 
-        importData: batchIndex === 0 ? importData : [], // Only send full data for first batch
+      // For first batch, send the import data
+      const requestPayload = {
         adminId: currentUser.accountId,
         checkJiraUsers: true,
-        prepareForImport: true, // This flag tells the backend to fully prepare records for import
-        batchSize: BATCH_SIZE,
-        batchIndex
-      });
-      
-      // Update UI with stable timing - don't update too frequently
-      const shouldUpdateUI = batchIndex === 0 || 
-                            validationResponse.data?.isComplete || 
-                            batchIndex % 3 === 0 || 
-                            batchIndex === validationResponse.data?.totalBatches - 1;
-      
-      // Use debounced updates for smoother UI
-      if (shouldUpdateUI) {
-        // Preserve the initializing state during the first phase
-        const preserveInitializing = batchIndex === 0 && validationResult?.data?.initializing;
-        
-        // Create a copy of the response to avoid reference issues
-        const updatedResult = {
-          ...validationResponse,
-          data: {
-            ...validationResponse.data,
-            // Preserve initializing flag if we're still in the first phase
-            initializing: preserveInitializing ? true : validationResponse.data?.initializing,
-            // Add a timestamp for debugging
-            lastUpdated: new Date().toISOString()
-          }
-        };
-        
-        // Update state with the new result
-        setValidationResult(prevState => {
-          // If we already have a state and we're in the initial phase, preserve certain values
-          if (prevState?.data?.initializing && batchIndex === 0) {
-            return {
-              ...updatedResult,
-              data: {
-                ...updatedResult.data,
-                initializing: true,
-                // Keep the message consistent during initialization
-                message: prevState.message || "Basic validation passed. Preparing data for import..."
-              }
-            };
-          }
-          return updatedResult;
-        });
-        
-        // Give UI time to render between updates - longer delay for smoother experience
-        await new Promise(resolve => setTimeout(resolve, 300));
-      }
-      
-      // Check if we need to process more batches
-      if (validationResponse.success && !validationResponse.data?.isComplete) {
-        // If this is the first batch with actual user validation, mark the transition
-        if (batchIndex === 0 && validationResult?.data?.initializing) {
-          // Update state to transition from initializing to user validation
-          setValidationResult(prevState => ({
-            ...prevState,
-            data: {
-              ...prevState.data,
-              initializing: false, // No longer in initializing phase
-              currentBatch: 1, // Starting first batch of user validation
-              message: "Starting user validation phase..."
-            }
-          }));
-          
-          // Give UI time to update before continuing
-          await new Promise(resolve => setTimeout(resolve, 800));
-        }
-        
-        // Show progress notification less frequently (every 20 batches)
-        if (batchIndex % 20 === 0 || batchIndex === 0 || batchIndex === validationResponse.data.totalBatches - 1) {
-          const progress = validationResponse.data.currentBatch / validationResponse.data.totalBatches * 100;
-          const validCount = validationResponse.data.validation?.validRecords?.length || 0;
-          const invalidCount = validationResponse.data.validation?.invalidRecords || 0;
-          
-          // Only show notification for significant progress updates
-          if (batchIndex === 0 || progress >= 25 || progress >= 50 || progress >= 75 || progress >= 90) {
-            showNotification(
-              `Validating data: ${Math.round(progress)}% complete. ` +
-              `${validCount} valid records ready for import.`
-            );
-          }
-        }
-        
-        // Process next batch
-        if (validationResponse.data.currentBatch < validationResponse.data.totalBatches) {
-          // Use a longer delay to prevent UI freezing and allow React to update
-          const nextBatchDelay = (batchIndex < 3) ? 600 : 300; // ms between batches
-          
-          setTimeout(() => {
-            validateBatch(validationResponse.data.currentBatch);
-          }, nextBatchDelay);
+        prepareForImport: true,
+        batchSize: 5,
+        batchIndex: batchIndex
+      };
+  
+      // Only send importData on the first batch
+      if (batchIndex === 0) {
+        if (!importData || !Array.isArray(importData) || importData.length === 0) {
+          showNotification('No valid data to validate', 'error');
+          setIsValidating(false);
           return;
         }
-      } else if (validationResponse.success && validationResponse.data?.isComplete) {
-        // When validation is complete, show a summary
+        requestPayload.importData = importData;
+      }
+  
+      console.log(`🔍 Frontend: Sending request for batch ${batchIndex}`);
+      
+      const validationResponse = await invoke('validatePTOImportData', requestPayload);
+      
+      console.log(`🔍 Frontend: Received response for batch ${batchIndex}:`, {
+        success: validationResponse.success,
+        isComplete: validationResponse.data?.isComplete,
+        currentBatch: validationResponse.data?.currentBatch,
+        totalBatches: validationResponse.data?.totalBatches
+      });
+  
+      // Update UI with current progress
+      setValidationResult(validationResponse);
+  
+      // Handle response
+      if (!validationResponse.success) {
+        console.error('❌ Frontend: Validation failed:', validationResponse.message);
+        showNotification(validationResponse.message || 'Validation failed', 'error');
+        setIsValidating(false);
+        return;
+      }
+  
+      // Check if validation is complete
+      if (validationResponse.data?.isComplete || validationResponse.data?.validationComplete) {
+        console.log('✅ Frontend: Validation complete!');
         const validCount = validationResponse.data.validation?.validRecords?.length || 0;
         const invalidCount = validationResponse.data.validation?.invalidRecords || 0;
         
-        // Final update with complete data - mark the third phase as active
-        const finalResult = {
-          ...validationResponse,
-          data: {
-            ...validationResponse.data,
-            validationComplete: true
-          }
-        };
-        
-        setValidationResult(finalResult);
-        
-        // Wait a moment before showing the final notification
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
         showNotification(
-          `Validation complete! ${validCount} records are ready for import. ` +
-          `${invalidCount > 0 ? `${invalidCount} records have errors.` : 'No errors found.'} ` +
-          `Click "Import Data" to proceed.`
+          `Validation complete! ${validCount} records ready for import. ${invalidCount} records have errors.`
         );
-        
-        // Only now set validating to false since the process is actually complete
         setIsValidating(false);
+        return;
       }
-      
-      // Handle errors
-      if (!validationResponse.success) {
-        // Show more details about validation errors
-        const errorCount = validationResponse.data?.validation?.errors?.length || 0;
-        const jiraErrors = validationResponse.data?.validation?.errors?.filter(e => 
-          e.errors?.some(err => err.includes('not found in Jira'))
-        ).length || 0;
+  
+      // If not complete, continue with next batch
+      if (validationResponse.data?.currentBatch < validationResponse.data?.totalBatches) {
+        const nextBatch = validationResponse.data.currentBatch;
+        console.log(`🔄 Frontend: Moving to next batch ${nextBatch}`);
         
-        let errorMessage = validationResponse.message || 'Validation failed';
-        if (jiraErrors > 0) {
-          errorMessage += ` (${jiraErrors} users not found in Jira)`;
-        }
-        
-        showNotification(errorMessage, 'error');
-        
-        // Set validating to false on error
-        setIsValidating(false);
-      }
-    } catch (error) {
-      console.error('Validation error:', error);
-      
-      // Format error message for better user experience
-      let errorMessage = 'Failed to validate data';
-      
-      if (error.toString().includes('network') || error.toString().includes('tunnel')) {
-        errorMessage = 'Network error during validation. Please check your connection and try again.';
-      } else if (error.toString().includes('timeout')) {
-        errorMessage = 'The validation process timed out. Try with a smaller file or try again later.';
+        // Small delay before next batch
+        setTimeout(() => {
+          validateBatch(nextBatch);
+        }, 500);
       } else {
-        errorMessage = 'Validation error: ' + error.toString();
+        console.log('✅ Frontend: All batches processed');
+        setIsValidating(false);
       }
-      
-      showNotification(errorMessage, 'error');
-      
-      setValidationResult({
-        success: false,
-        message: errorMessage,
-        error: error.toString()
-      });
-      
-      // Set validating to false on error
+  
+    } catch (error) {
+      console.error('❌ Frontend: Validation error:', error);
+      showNotification('Validation error: ' + error.message, 'error');
       setIsValidating(false);
     }
   };
   
   const handleValidateData = async () => {
-    console.log('🔍 DEBUG: Starting validation');
-    console.log('🔍 DEBUG: importData:', importData);
-    console.log('🔍 DEBUG: importData type:', typeof importData);
-    console.log('🔍 DEBUG: importData is array:', Array.isArray(importData));
-    console.log('🔍 DEBUG: importData length:', importData ? importData.length : 'undefined');
-    
-    if (!importData) {
-      console.error('🔍 DEBUG: importData is null/undefined');
+    if (!importData || !Array.isArray(importData) || importData.length === 0) {
       showNotification('No data to validate', 'error');
       return;
     }
     
-    if (!Array.isArray(importData)) {
-      console.error('🔍 DEBUG: importData is not an array, type:', typeof importData);
-      showNotification('Invalid data format', 'error');
-      return;
-    }
+    console.log('🔍 Starting optimized validation process...');
+    setIsValidating(true);
     
-    if (importData.length === 0) {
-      console.error('🔍 DEBUG: importData is empty array');
-      showNotification('No data to validate', 'error');
-      return;
-    }
-    
-    console.log('🔍 DEBUG: All validations passed, proceeding...');
-    
-    // Set initial validation state to prevent flickering
-    const batchSize = 5;
-    const totalBatches = Math.ceil(importData.length / batchSize);
-    
-    console.log('🔍 DEBUG: Setting initial validation result');
-    console.log('🔍 DEBUG: totalBatches:', totalBatches);
-    
+    // Set initial state
     setValidationResult({
       success: true,
       data: {
         isComplete: false,
-        currentBatch: 0,
-        totalBatches: totalBatches,
-        initializing: true,
-        validation: {
-          validRecords: [],
-          invalidRecords: 0
-        }
+        validationInProgress: true
       },
-      message: "Starting validation and preparing data for import..."
+      message: "Validating data format and user lookups..."
     });
     
-    setIsValidating(true);
-    
-    // Give UI time to stabilize before starting the validation process
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    console.log('🔍 DEBUG: Starting validateBatch(0)');
-    // Start the validation process with the first batch
-    validateBatch(0);
+    try {
+      // Single validation call - simplified process
+      const response = await invoke('validatePTOImportData', {
+        importData: importData,
+        adminId: currentUser.accountId,
+        checkJiraUsers: true,
+        batchIndex: 0,
+        batchSize: 50
+      });
+      
+      setValidationResult(response);
+      setIsValidating(false);
+      
+      if (response.success && response.data?.validationComplete) {
+        const validCount = response.data.validation?.validRecords?.length || 0;
+        const invalidCount = response.data.validation?.invalidRecords || 0;
+        
+        showNotification(
+          `Validation complete! ${validCount} records ready for import. ${invalidCount > 0 ? `${invalidCount} records have errors.` : ''}`
+        );
+      } else {
+        showNotification(response.message || 'Validation failed', 'error');
+      }
+      
+    } catch (error) {
+      console.error('Validation error:', error);
+      setValidationResult({
+        success: false,
+        message: 'Validation failed: ' + error.message
+      });
+      setIsValidating(false);
+      showNotification('Validation failed: ' + error.message, 'error');
+    }
   };
 
   const handleImportPTOs = async () => {
@@ -388,115 +260,57 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
     }
     
     setIsImporting(true);
-    setImportResult(null);
+    setImportResult({
+      success: true,
+      inProgress: true,
+      message: "Starting import process...",
+      data: { importedRecords: 0, totalRecords: validationResult.data.validation?.validRecords?.length || 0 }
+    });
     
     try {
-      // Set initial import state for UI feedback
-      setImportResult({
-        success: true,
-        inProgress: true,
-        message: "Starting import process...",
-        data: {
-          importedRecords: 0,
-          totalRecords: validationResult.data.validation?.validRecords?.length || 0,
-          progress: 0
-        }
-      });
+      showNotification('Starting import process...');
       
-      // Give UI time to update
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Show notification about the import starting
-      showNotification(`Starting import process. This should be fast since data is already prepared.`);
-      
-      // Update progress indicator to show we're working
-      setImportResult(prev => ({
-        ...prev,
-        data: {
-          ...prev.data,
-          progress: 10
-        }
-      }));
-      
-      // Give UI time to update
-      await new Promise(resolve => setTimeout(resolve, 200));
-      
-      // Use a single import call with the stored validation data
+      // Use streamlined import with stored validation
       const response = await invoke('importPTODailySchedules', { 
         adminId: currentUser.accountId,
-        useStoredValidation: true // Use the data that was prepared during validation
+        useStoredValidation: true
       });
       
-      // Give UI time to update
-      await new Promise(resolve => setTimeout(resolve, 200));
-      
-      // Store the import result with completed status
       setImportResult({
         ...response,
         inProgress: false
       });
       
       if (response.success) {
-        // Show a more detailed success message
-        const successMessage = response.data?.importedRecords === response.data?.totalRecords
-          ? `Successfully imported all ${response.data?.importedRecords} PTO records`
-          : `Imported ${response.data?.importedRecords} of ${response.data?.totalRecords} PTO records`;
-          
+        const successMessage = `Successfully imported ${response.data?.importedRecords || 0} PTO records`;
         showNotification(successMessage);
         
-        // Call the onImportSuccess callback to refresh data in parent component
         if (onImportSuccess) {
           onImportSuccess();
         }
         
-        // Don't close the modal immediately so user can see the results
+        // Auto-close on full success
         if (response.data?.importedRecords === response.data?.totalRecords) {
-          // Only auto-close if all records were imported successfully
           setTimeout(() => {
             onClose();
             resetState();
-          }, 5000); // Give user 5 seconds to see the success message
+          }, 3000);
         }
       } else {
-        showNotification(response.message || 'Failed to import PTO daily schedules', 'error');
-        console.error('Import errors:', response.data?.errors);
+        showNotification(response.message || 'Import failed', 'error');
       }
+      
     } catch (error) {
       console.error('Import error:', error);
-      
-      // Format the error message to be more user-friendly
-      let errorMessage = 'Failed to import data';
-      if (error.toString().includes('network') || error.toString().includes('tunnel')) {
-        errorMessage = 'Network error during import. Please check your connection and try again.';
-      } else {
-        errorMessage = 'Import error: ' + error.toString();
-      }
-      
+      const errorMessage = 'Import failed: ' + error.message;
       showNotification(errorMessage, 'error');
-      
       setImportResult({
         success: false,
         inProgress: false,
-        message: errorMessage,
-        error: error.toString()
+        message: errorMessage
       });
     } finally {
       setIsImporting(false);
-      
-      // Check import status after a short delay to get final counts
-      setTimeout(async () => {
-        try {
-          const statusResponse = await invoke('checkPTOImportStatus', {
-            adminId: currentUser.accountId
-          });
-          
-          if (statusResponse.success) {
-            console.log('Import status:', statusResponse.data);
-          }
-        } catch (statusError) {
-          console.error('Failed to check import status:', statusError);
-        }
-      }, 1000);
     }
   };
 
@@ -508,12 +322,21 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
     setIsValidating(false);
     setIsImporting(false);
     
-    // Clear any stored validation data in the backend
+    // Clear any stored validation data in the backend with proper adminId
     try {
-      await invoke('clearImportValidationData');
-      console.log('✅ Cleared import validation data');
+      if (currentUser && currentUser.accountId) {
+        const response = await invoke('clearImportValidationData', {
+          adminId: currentUser.accountId // Ensure this is passed as string
+        });
+        console.log('✅ Backend validation data cleared:', response);
+      } else {
+        console.warn('⚠️ No current user available for cleanup');
+        // Try to clear without adminId
+        await invoke('clearImportValidationData', {});
+      }
     } catch (error) {
       console.error('❌ Error clearing validation data:', error);
+      // Don't fail the reset process if cleanup fails
     }
   };
 
@@ -532,8 +355,20 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
         <div className="modal-header">
           <h3 className="modal-title">Import PTO Requests</h3>
           <button className="modal-close" onClick={async () => {
-            await resetState();
+            try {
+              // Clear validation data before closing
+              if (currentUser?.accountId) {
+                await invoke('clearImportValidationData', {
+                  adminId: currentUser.accountId
+                });
+              }
+            } catch (error) {
+              console.error('❌ Error clearing data on close:', error);
+            }
+            
+            
             onClose();
+            await resetState();
           }}>
             <X size={20} />
           </button>
@@ -589,226 +424,20 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
               
               {isValidating && (
                 <div className="validation-progress">
-                  {validationResult?.data ? (
-                    <>
-                      {/* Simplified progress bar with smoother transitions */}
-                      <div className="progress-bar">
-                        <div 
-                          className="progress-fill" 
-                          style={{ 
-                            width: `${Math.round(((validationResult.data?.currentBatch || 0) / (validationResult.data?.totalBatches || 1)) * 100)}%`,
-                            transition: 'width 0.8s ease-in-out'
-                          }}
-                        ></div>
+                  <div className="validation-spinner-container">
+                    <div className="validation-spinner"></div>
+                    <div className="validation-message">
+                      <h5>Validating Import Data</h5>
+                      <p>Checking format and user database...</p>
+                      <div className="validation-stats">
+                        <span>📄 {importData.length} records to process</span>
                       </div>
-                      
-                      {/* Validation phase indicator */}
-                      <div className="validation-phase-indicator">
-                        <div className={`phase ${validationResult.data.initializing ? 'active' : 'complete'}`}>
-                          <div className="phase-dot"></div>
-                          <span>Format check</span>
-                        </div>
-                        <div className={`phase ${validationResult.data.currentBatch > 0 && !validationResult.data.validationComplete ? 'active' : (validationResult.data.currentBatch > 0 ? 'complete' : '')}`}>
-                          <div className="phase-dot"></div>
-                          <span>User validation</span>
-                        </div>
-                        <div className={`phase ${validationResult.data.validationComplete ? 'active' : ''}`}>
-                          <div className="phase-dot"></div>
-                          <span>Ready for import</span>
-                        </div>
-                      </div>
-                      
-                      {/* Simplified stats with cleaner layout */}
-                      <div className="progress-stats">
-                        <div className="progress-status-container">
-                          <span className="progress-status">
-                            {validationResult.data.initializing && validationResult.data.currentBatch === 0
-                              ? "Basic validation passed. Preparing data for import..." 
-                              : validationResult.data.currentBatch > 0
-                                ? `Validating user data: batch ${validationResult.data.currentBatch} of ${validationResult.data.totalBatches}`
-                                : "Starting validation and preparing data for import..."
-                            }
-                          </span>
-                          
-                          {/* Progress percentage */}
-                          <span className="progress-percentage">
-                            {Math.round(((validationResult.data?.currentBatch || 0) / (validationResult.data?.totalBatches || 1)) * 100)}%
-                          </span>
-                        </div>
-                        
-                        {/* Always show summary information */}
-                        <div className="progress-summary">
-                          <div className="summary-row">
-                            <span className="summary-label">Total records:</span>
-                            <span className="summary-value">
-                              {importData.length}
-                            </span>
-                          </div>
-                          
-                          <div className="summary-row">
-                            <span className="summary-label">Records validated:</span>
-                            <span className="summary-value">
-                              <span className="valid-count">{validationResult.data.validation?.validRecords?.length || 0} valid</span>
-                              <span className="invalid-count">{validationResult.data.validation?.invalidRecords || 0} invalid</span>
-                            </span>
-                          </div>
-                          
-                          {validationResult.data.currentBatch > 0 && (
-                            <>
-                              <div className="summary-row">
-                                <span className="summary-label">Jira users found:</span>
-                                <span className="summary-value">
-                                  {validationResult.data.batchValidation?.userCache ? 
-                                    Object.keys(validationResult.data.batchValidation.userCache).length : 0} users
-                                </span>
-                              </div>
-                              
-                              <div className="summary-row">
-                                <span className="summary-label">Estimated completion:</span>
-                                <span className="summary-value">
-                                  {Math.round((validationResult.data.totalBatches - validationResult.data.currentBatch) * 2)} seconds
-                                </span>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                        
-                        <div className="progress-message">
-                          {validationResult.data.currentBatch > 0 ? 
-                            "Preparing data for import. Each record is being enhanced with Jira user information." :
-                            validationResult.data.initializing ? 
-                              `Basic validation passed. ${importData.length} records have valid format. Preparing data for import...` :
-                              "Starting validation and preparing data for import..."}
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="validation-initial">
-                        <div className="validation-spinner"></div>
-                        <div className="initial-validation-message">
-                          <h5>Validating Data Format</h5>
-                          <p>Checking CSV structure and required fields...</p>
-                          <p className="validation-tip">This is the first step before user validation begins</p>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-              
-              {validationResult && validationResult.data?.validationComplete && (
-                <div className="validation-complete-summary" style={{
-                  backgroundColor: '#f8f9fa',
-                  padding: '15px',
-                  borderRadius: '6px',
-                  marginTop: '15px',
-                  marginBottom: '15px',
-                  border: '1px solid #e9ecef'
-                }}>
-                  <div className="validation-phase-indicator" style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    marginBottom: '15px',
-                    position: 'relative'
-                  }}>
-                    {/* Add connector lines */}
-                    <div style={{
-                      position: 'absolute',
-                      top: '8px',
-                      left: '16%',
-                      right: '16%',
-                      height: '2px',
-                      backgroundColor: '#4CAF50',
-                      zIndex: 1
-                    }}></div>
-                    
-                    <div className="phase complete" style={{
-                      flex: '1',
-                      textAlign: 'center',
-                      position: 'relative',
-                      zIndex: 2
-                    }}>
-                      <div className="phase-dot" style={{
-                        width: '16px',
-                        height: '16px',
-                        backgroundColor: '#4CAF50',
-                        borderRadius: '50%',
-                        margin: '0 auto 5px',
-                        border: '2px solid #fff',
-                        boxShadow: '0 0 0 2px #4CAF50'
-                      }}></div>
-                      <span style={{ fontSize: '12px', color: '#4CAF50', fontWeight: 'bold' }}>Format check</span>
-                    </div>
-                    <div className="phase complete" style={{
-                      flex: '1',
-                      textAlign: 'center',
-                      position: 'relative',
-                      zIndex: 2
-                    }}>
-                      <div className="phase-dot" style={{
-                        width: '16px',
-                        height: '16px',
-                        backgroundColor: '#4CAF50',
-                        borderRadius: '50%',
-                        margin: '0 auto 5px',
-                        border: '2px solid #fff',
-                        boxShadow: '0 0 0 2px #4CAF50'
-                      }}></div>
-                      <span style={{ fontSize: '12px', color: '#4CAF50', fontWeight: 'bold' }}>User validation</span>
-                    </div>
-                    <div className="phase active" style={{
-                      flex: '1',
-                      textAlign: 'center',
-                      position: 'relative',
-                      zIndex: 2
-                    }}>
-                      <div className="phase-dot" style={{
-                        width: '16px',
-                        height: '16px',
-                        backgroundColor: '#2196F3',
-                        borderRadius: '50%',
-                        margin: '0 auto 5px',
-                        border: '2px solid #fff',
-                        boxShadow: '0 0 0 2px #2196F3'
-                      }}></div>
-                      <span style={{ fontSize: '12px', color: '#2196F3', fontWeight: 'bold' }}>Ready for import</span>
-                    </div>
-                  </div>
-                  
-                  <div className="progress-summary" style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px'
-                  }}>
-                    <div className="summary-row" style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: '14px'
-                    }}>
-                      <span className="summary-label" style={{ fontWeight: 'bold' }}>Total records:</span>
-                      <span className="summary-value">{importData.length}</span>
-                    </div>
-                    <div className="summary-row" style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: '14px'
-                    }}>
-                      <span className="summary-label" style={{ fontWeight: 'bold' }}>Records validated:</span>
-                      <span className="summary-value">
-                        <span className="valid-count" style={{ color: '#4CAF50', marginRight: '10px' }}>
-                          {validationResult.data.validation?.validRecords?.length || 0} valid
-                        </span>
-                        <span className="invalid-count" style={{ color: '#f44336' }}>
-                          {validationResult.data.validation?.invalidRecords || 0} invalid
-                        </span>
-                      </span>
                     </div>
                   </div>
                 </div>
               )}
-              
-              {validationResult && (
+
+              {validationResult && !isValidating && (
                 <div className={`validation-result ${validationResult.success ? 'success' : 'error'}`}>
                   <div className="validation-header">
                     {validationResult.success ? (
@@ -820,71 +449,48 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
                   </div>
                   
                   {validationResult.data?.validation && (
-                    <div className="validation-details">
-                      <p>Total records: {validationResult.data.validation.totalRecords}</p>
-                      <p>Valid records: {validationResult.data.validation.validRecords?.length || 0}</p>
-                      <p>Invalid records: {validationResult.data.validation.invalidRecords || 0}</p>
+                    <div className="validation-summary">
+                      <div className="summary-grid">
+                        <div className="summary-item">
+                          <span className="summary-label">Total:</span>
+                          <span className="summary-value">{validationResult.data.validation.totalRecords}</span>
+                        </div>
+                        <div className="summary-item">
+                          <span className="summary-label">Ready:</span>
+                          <span className="summary-value success">{validationResult.data.validation.validRecords?.length || 0}</span>
+                        </div>
+                        <div className="summary-item">
+                          <span className="summary-label">Errors:</span>
+                          <span className="summary-value error">{validationResult.data.validation.invalidRecords || 0}</span>
+                        </div>
+                      </div>
                       
                       {validationResult.data.validation.errors?.length > 0 && (
                         <div className="validation-errors">
-                          <h5>Errors:</h5>
-                          <div className="error-table-container">
-                            <table className="error-table">
-                              <thead>
-                                <tr>
-                                  <th>Record #</th>
-                                  <th>Error</th>
-                                  <th>Email</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {validationResult.data.validation.errors.slice(0, 10).map((error, index) => (
-                                  <tr key={index} className="error-row">
-                                    <td>{error.record}</td>
-                                    <td className="error-message">
-                                      {error.errors.join(', ')}
-                                    </td>
-                                    <td>
-                                      {error.data && (
-                                        <div className="error-data">
-                                          {error.data.requester_email && <div>Requester: {error.data.requester_email}</div>}
-                                          {error.data.manager_email && <div>Manager: {error.data.manager_email}</div>}
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                            {validationResult.data.validation.errors.length > 10 && (
-                              <div className="more-errors">...and {validationResult.data.validation.errors.length - 10} more errors</div>
+                          <h5>Issues Found ({validationResult.data.validation.errors.length}):</h5>
+                          <div className="error-list">
+                            {validationResult.data.validation.errors.slice(0, 5).map((error, index) => (
+                              <div key={index} className="error-item">
+                                <span className="error-record">Row {error.record}:</span>
+                                <span className="error-message">{error.errors.join(', ')}</span>
+                                {error.data?.requester_email && (
+                                  <span className="error-email">({error.data.requester_email})</span>
+                                )}
+                              </div>
+                            ))}
+                            {validationResult.data.validation.errors.length > 5 && (
+                              <div className="error-more">
+                                +{validationResult.data.validation.errors.length - 5} more errors
+                              </div>
                             )}
                           </div>
                         </div>
                       )}
                     </div>
                   )}
-                  
-                  {validationResult.data?.userCheckResults && (
-                    <div className="user-check-results">
-                      <h5>User Check Results:</h5>
-                      <ul>
-                        {validationResult.data.userCheckResults.map((result, index) => (
-                          <li key={index}>
-                            <strong>Record {result.record}:</strong> 
-                            Requester: {result.requester.found ? '✓' : '✗'} 
-                            {result.requester.found ? ` (${result.requester.details.displayName})` : ` (${result.requester.email})`}, 
-                            Manager: {result.manager.found ? '✓' : '✗'}
-                            {result.manager.found ? ` (${result.manager.details.displayName})` : ` (${result.manager.email})`}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
-            
             {/* Step 3: Import Data */}
             <div className="import-step">
               <h4>Step 3: Import Data</h4>
