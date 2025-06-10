@@ -2316,133 +2316,282 @@ resolver.define('checkPTOImportStatus', async (req) => {
 // Validate PTO Import Data
 resolver.define('validatePTOImportData', async (req) => {
   try {
-    console.log('🔍 DEBUG Backend: validatePTOImportData called');
-    console.log('🔍 DEBUG Backend: req.payload:', req.payload);
-
-    const payload = req.payload || {};
-    console.log('🔍 DEBUG Backend: payload keys:', Object.keys(payload));
-
-    const { csvData, currentUser } = req.payload;
-    console.log(`🔍 Validating ${csvData.length} PTO import records`);
+    console.log('🔍 Starting PTO import validation with existing user database...');
+    const { importData, adminId } = req.payload;
+    console.log(`📊 Processing ${importData.length} PTO records`);
     
     // Verify admin status
     const admins = await storage.get('pto_admins') || [];
-    if (!admins.includes(currentUser.accountId)) {
+    if (!admins.includes(adminId)) {
       throw new Error('Unauthorized: Admin privileges required');
     }
     
-    const validationResults = [];
+    // Load existing user database
+    console.log('📋 Loading existing user database...');
+    const users = await storage.get('users') || [];
+    console.log(`💾 User database loaded: ${users.length} users`);
     
-    for (let i = 0; i < csvData.length; i++) {
-      const row = csvData[i];
-      const result = {
-        rowNumber: i + 1,
-        original: row,
-        validated: null,
-        errors: [],
-        warnings: [],
-        status: 'pending'
+    if (users.length === 0) {
+      return {
+        success: false,
+        message: 'User database is empty. Please import users from Jira first.',
+        action: 'IMPORT_USERS_FIRST'
       };
-      
-      // Validate required fields
-      const requiredFields = ['employee_email', 'start_date', 'end_date', 'leave_type'];
-      const missingFields = requiredFields.filter(field => !row[field]);
-      
-      if (missingFields.length > 0) {
-        result.errors.push(`Missing required fields: ${missingFields.join(', ')}`);
-      }
-      
-      // Validate dates
-      const startDate = new Date(row.start_date);
-      const endDate = new Date(row.end_date);
-      
-      if (isNaN(startDate.getTime())) {
-        result.errors.push('Invalid start_date format');
-      }
-      
-      if (isNaN(endDate.getTime())) {
-        result.errors.push('Invalid end_date format');
-      }
-      
-      if (startDate > endDate) {
-        result.errors.push('Start date cannot be after end date');
-      }
-      
-      // Validate leave type
-      const validLeaveTypes = ['vacation', 'sick', 'personal', 'holiday'];
-      if (!validLeaveTypes.includes(row.leave_type?.toLowerCase())) {
-        result.errors.push(`Invalid leave_type. Must be one of: ${validLeaveTypes.join(', ')}`);
-      }
-      
-      // Try to find user (this would need to be enhanced based on your user search capabilities)
-      let userFound = false;
-      if (row.employee_email) {
-        try {
-          const userResponse = await invoke('getJiraUsers', { query: row.employee_email });
-          if (userResponse.success && userResponse.data.length > 0) {
-            const user = userResponse.data.find(u => 
-              u.emailAddress?.toLowerCase() === row.employee_email.toLowerCase()
-            );
-            if (user) {
-              userFound = true;
-              result.validated = {
-                requester_id: user.accountId,
-                requester_name: user.displayName,
-                requester_email: user.emailAddress,
-                requester_avatar: user.avatarUrl,
-                manager_id: 'admin',
-                manager_name: 'System Admin',
-                manager_email: 'admin@system.com',
-                start_date: startDate.toISOString().split('T')[0],
-                end_date: endDate.toISOString().split('T')[0],
-                leave_type: row.leave_type.toLowerCase(),
-                reason: row.reason || 'Imported from CSV',
-                status: 'approved',
-                import_source: 'csv_import',
-                imported_by: currentUser.accountId
-              };
-            }
-          }
-        } catch (error) {
-          console.warn('Error searching for user:', error);
-        }
-      }
-      
-      if (!userFound) {
-        result.errors.push(`User not found: ${row.employee_email}`);
-      }
-      
-      // Set final status
-      if (result.errors.length === 0) {
-        result.status = 'valid';
-      } else {
-        result.status = 'invalid';
-      }
-      
-      validationResults.push(result);
     }
     
-    const validCount = validationResults.filter(r => r.status === 'valid').length;
-    const invalidCount = validationResults.filter(r => r.status === 'invalid').length;
+    // Create email lookup map from your existing database
+    const emailToUserMap = {};
+    let usersWithEmails = 0;
     
-    console.log(`✅ Validation complete: ${validCount} valid, ${invalidCount} invalid`);
+    for (const user of users) {
+      const email = user.email_address || user.emailAddress;
+      
+      if (email) {
+        emailToUserMap[email.toLowerCase()] = {
+          id: user.id,
+          accountId: user.jira_account_id || user.accountId,
+          displayName: user.display_name || user.displayName || `${user.first_name} ${user.last_name}`.trim(),
+          firstName: user.first_name,
+          lastName: user.last_name,
+          emailAddress: email,
+          avatarUrl: user.avatar_url || user.avatarUrls?.['48x48'] || '',
+          active: user.status === 'active',
+          teamIds: user.team_ids || user.team_id ? [user.team_id] : [] // Handle both single and multiple teams
+        };
+        usersWithEmails++;
+      }
+    }
+    
+    console.log(`📧 Created email lookup map: ${usersWithEmails} users with emails`);
+    
+    const processedRecords = [];
+    const errors = [];
+    const warnings = [];
+    const uniqueEmails = [...new Set(importData.map(row => row.requester_email))].filter(Boolean);
+    
+    console.log(`👥 Found ${uniqueEmails.length} unique user emails in import data`);
+    
+    // Check email matches
+    let foundInDatabase = 0;
+    let notFoundEmails = [];
+    
+    for (const email of uniqueEmails) {
+      if (emailToUserMap[email.toLowerCase()]) {
+        foundInDatabase++;
+      } else {
+        notFoundEmails.push(email);
+      }
+    }
+    
+    console.log(`✅ Users found in database: ${foundInDatabase}/${uniqueEmails.length}`);
+    console.log(`❌ Users NOT found: ${notFoundEmails.length}/${uniqueEmails.length}`);
+    if (notFoundEmails.length > 0) {
+      console.log(`❌ Missing emails:`, notFoundEmails.slice(0, 10)); // Show first 10
+    }
+    
+    // Process all records
+    console.log('🔄 Processing import records...');
+    
+    for (let i = 0; i < importData.length; i++) {
+      const row = importData[i];
+      
+      try {
+        // Validate required fields
+        if (!row.requester_email || !row.date || !row.leave_type) {
+          errors.push({
+            row: i + 1,
+            email: row.requester_email,
+            error: `Missing required fields: ${!row.requester_email ? 'email ' : ''}${!row.date ? 'date ' : ''}${!row.leave_type ? 'leave_type' : ''}`
+          });
+          continue;
+        }
+        
+        // Validate date
+        const date = new Date(row.date);
+        if (isNaN(date.getTime())) {
+          errors.push({
+            row: i + 1,
+            email: row.requester_email,
+            error: `Invalid date format: ${row.date}`
+          });
+          continue;
+        }
+        
+        // Validate leave type
+        const validLeaveTypes = ['vacation', 'sick', 'personal', 'holiday', 'other leave type'];
+        if (!validLeaveTypes.includes(row.leave_type?.toLowerCase())) {
+          errors.push({
+            row: i + 1,
+            email: row.requester_email,
+            error: `Invalid leave type: ${row.leave_type}. Must be: ${validLeaveTypes.join(', ')}`
+          });
+          continue;
+        }
+        
+        // Get user from database
+        const user = emailToUserMap[row.requester_email.toLowerCase()];
+        if (!user) {
+          errors.push({
+            row: i + 1,
+            email: row.requester_email,
+            error: `User not found in database: ${row.requester_email}`
+          });
+          continue;
+        }
+        
+        // Validate hours
+        const hours = parseFloat(row.hours) || 8;
+        if (hours < 0 || hours > 24) {
+          warnings.push({
+            row: i + 1,
+            email: row.requester_email,
+            warning: `Unusual hours value: ${hours}. Using anyway.`
+          });
+        }
+        
+        // Create processed record ready for import
+        const processedRecord = {
+          // Original data for reference
+          original: {
+            requester_email: row.requester_email,
+            manager_email: row.manager_email,
+            leave_type: row.leave_type,
+            date: row.date,
+            status: row.status,
+            schedule_type: row.schedule_type,
+            hours: row.hours
+          },
+          
+          // Complete import-ready data with user database info
+          importReady: {
+            id: `pto_import_${Date.now()}_${i}`,
+            // User information from database
+            user_id: user.id,
+            requester_id: user.accountId,
+            requester_name: user.displayName,
+            requester_email: user.emailAddress,
+            requester_avatar: user.avatarUrl,
+            first_name: user.firstName,
+            last_name: user.lastName,
+            team_ids: user.teamIds, // Array of team IDs
+            primary_team_id: user.teamIds && user.teamIds.length > 0 ? user.teamIds[0] : null, // First team as primary
+            // Manager information
+            manager_email: row.manager_email || 'admin@system.com',
+            // PTO details
+            date: date.toISOString().split('T')[0],
+            leave_type: row.leave_type.toLowerCase(),
+            status: row.status || 'approved',
+            schedule_type: row.schedule_type || 'FULL_DAY',
+            hours: hours,
+            reason: row.reason || 'Imported from CSV',
+            // Import metadata
+            import_source: 'csv_bulk_import',
+            imported_by: adminId,
+            import_timestamp: new Date().toISOString(),
+            row_number: i + 1,
+            // Calculated fields
+            year: date.getFullYear(),
+            month: date.getMonth() + 1,
+            day_of_week: date.getDay(),
+            is_weekend: date.getDay() === 0 || date.getDay() === 6
+          },
+          
+          // Validation status
+          status: 'ready',
+          errors: [],
+          warnings: []
+        };
+        
+        processedRecords.push(processedRecord);
+        
+      } catch (error) {
+        errors.push({
+          row: i + 1,
+          email: row.requester_email || 'unknown',
+          error: `Processing error: ${error.message}`
+        });
+      }
+      
+      // Progress logging
+      if ((i + 1) % 500 === 0) {
+        console.log(`📈 Processed ${i + 1}/${importData.length} records...`);
+      }
+    }
+    
+    const successCount = processedRecords.length;
+    const errorCount = errors.length;
+    const warningCount = warnings.length;
+    
+    console.log(`✅ Processing complete:`);
+    console.log(`   📊 ${successCount} records ready for import`);
+    console.log(`   ✅ ${foundInDatabase} users found in database`);
+    console.log(`   ❌ ${notFoundEmails.length} users missing from database`);
+    console.log(`   ⚠️ ${warningCount} warnings`);
+    console.log(`   ❌ ${errorCount} errors`);
+    
+    // Log error breakdown for debugging
+    const errorBreakdown = {};
+    errors.forEach(error => {
+      const errorType = error.error.split(':')[0];
+      errorBreakdown[errorType] = (errorBreakdown[errorType] || 0) + 1;
+    });
+    console.log('🔍 Error breakdown:', errorBreakdown);
+    
+    // Log sample errors
+    if (errors.length > 0) {
+      console.log('🔍 Sample errors:', errors.slice(0, 5));
+    }
     
     return {
       success: true,
       data: {
-        results: validationResults,
+        processedRecords,
+        errors,
+        warnings,
+        missingUsers: notFoundEmails,
         summary: {
-          total: csvData.length,
-          valid: validCount,
-          invalid: invalidCount
-        }
+          total: importData.length,
+          ready: successCount,
+          usersFound: foundInDatabase,
+          usersMissing: notFoundEmails.length,
+          errors: errorCount,
+          warnings: warningCount,
+          canProceedWithImport: successCount > 0,
+          nextSteps: [
+            `${successCount} records are ready for immediate import`,
+            `${notFoundEmails.length} users need to be added to database first`,
+            `${errorCount} records have validation errors that need fixing`
+          ]
+        },
+        // Enhanced preview showing complete user info from database
+        preview: processedRecords.slice(0, 10).map(r => ({
+          row: r.importReady.row_number,
+          userName: r.importReady.requester_name,
+          email: r.importReady.requester_email,
+          userId: r.importReady.user_id,
+          jiraId: r.importReady.requester_id,
+          teamIds: r.importReady.team_ids, // Array of teams
+          primaryTeam: r.importReady.primary_team_id, // Primary team
+          date: r.importReady.date,
+          leaveType: r.importReady.leave_type,
+          hours: r.importReady.hours,
+          status: r.importReady.status
+        })),
+        // List of users that need to be imported to database
+        usersToImport: notFoundEmails.length > 0 ? {
+          emails: notFoundEmails,
+          message: `These ${notFoundEmails.length} users need to be imported from Jira first`,
+          suggestedAction: "Use the 'Import Users from Jira' function to add these users to your database"
+        } : null
       }
     };
+    
   } catch (error) {
     console.error('❌ Error validating import data:', error);
     return {
       success: false,
-      message: error.message
+      message: error.message,
+      stack: error.stack
     };
   }
 });
