@@ -399,8 +399,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
     }
   };
 
-
-
   const handleExportPTODailySchedules = async () => {
     try {
       const response = await invoke('exportPTODailySchedules', { filters: exportFilters });
@@ -576,6 +574,48 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                     <div className="action-desc">Export PTO daily schedules</div>
                   </div>
                 </button>
+
+                {/* CLEANUP BUTTON - NOW IN MAIN ACTIONS GRID */}
+                <button 
+                  onClick={async () => {
+                    if (!window.confirm('⚠️ WARNING: This will DELETE ALL PTO data (requests + daily schedules). This cannot be undone. Are you sure?')) {
+                      return;
+                    }
+                    
+                    if (!window.confirm('Final confirmation: Delete ALL PTO data? Type YES to confirm.')) {
+                      return;
+                    }
+                    
+                    setLoading(true);
+                    try {
+                      const response = await invoke('cleanupPTODatabase', {
+                        adminId: currentUser.accountId,
+                        confirmDelete: true
+                      });
+                      
+                      if (response.success) {
+                        showNotification(`✅ Cleanup complete: ${response.data.deletedCount} items removed`);
+                        loadAllAdminData(); // Refresh all data
+                      } else {
+                        showNotification(response.message || 'Cleanup failed', 'error');
+                      }
+                    } catch (error) {
+                      showNotification('Cleanup failed: ' + error.message, 'error');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }} 
+                  className="admin-action-btn"
+                  disabled={loading}
+                >
+                  <div className="action-icon bg-red">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div className="action-content">
+                    <div className="action-title">🗑️ Cleanup PTO Database</div>
+                    <div className="action-desc">Delete ALL PTO requests and schedules</div>
+                  </div>
+                </button>
               </div>
             </div>
           </div>
@@ -640,100 +680,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
           </div>
 
           <div className="analytics-grid">
-            <div className="card analytics-card">
-              <div className="card-header">
-                <h4>Requests by Status</h4>
-              </div>
-              <div className="card-body">
-                <div className="analytics-chart">
-                  <div className="chart-item">
-                    <div className="chart-bar">
-                      <div 
-                        className="bar bar-green" 
-                        style={{ height: `${(stats.approvedRequests / Math.max(stats.totalRequests, 1)) * 100}%` }}
-                      ></div>
-                    </div>
-                    <div className="chart-label">
-                      <div className="chart-value">{stats.approvedRequests}</div>
-                      <div className="chart-name">Approved</div>
-                    </div>
-                  </div>
-                  <div className="chart-item">
-                    <div className="chart-bar">
-                      <div 
-                        className="bar bar-yellow" 
-                        style={{ height: `${(stats.pendingRequests / Math.max(stats.totalRequests, 1)) * 100}%` }}
-                      ></div>
-                    </div>
-                    <div className="chart-label">
-                      <div className="chart-value">{stats.pendingRequests}</div>
-                      <div className="chart-name">Pending</div>
-                    </div>
-                  </div>
-                  <div className="chart-item">
-                    <div className="chart-bar">
-                      <div 
-                        className="bar bar-red" 
-                        style={{ height: `${(stats.declinedRequests / Math.max(stats.totalRequests, 1)) * 100}%` }}
-                      ></div>
-                    </div>
-                    <div className="chart-label">
-                      <div className="chart-value">{stats.declinedRequests}</div>
-                      <div className="chart-name">Declined</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="card analytics-card">
-              <div className="card-header">
-                <h4>Requests by Leave Type</h4>
-              </div>
-              <div className="card-body">
-                <div className="analytics-list">
-                  {Object.entries(analytics.requestsByLeaveType)
-                    .sort(([,a], [,b]) => b - a)
-                    .map(([type, count]) => (
-                    <div key={type} className="analytics-item">
-                      <div className="item-info">
-                        <span className="item-icon">
-                          {type === 'vacation' ? '🏖️' : 
-                           type === 'sick' ? '🤒' : 
-                           type === 'personal' ? '👤' : '🎉'}
-                        </span>
-                        <span className="item-label">
-                          {type.charAt(0).toUpperCase() + type.slice(1)}
-                        </span>
-                      </div>
-                      <div className="item-value">{count}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="card analytics-card">
-              <div className="card-header">
-                <h4>Requests by Team</h4>
-              </div>
-              <div className="card-body">
-                <div className="analytics-list">
-                  {Object.entries(analytics.requestsByTeam)
-                    .sort(([,a], [,b]) => b - a)
-                    .map(([team, count]) => (
-                    <div key={team} className="analytics-item">
-                      <div className="item-info">
-                        <span className="item-icon">👥</span>
-                        <span className="item-label">{team}</span>
-                      </div>
-                      <div className="item-value">{count}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
             <div className="card analytics-card">
               <div className="card-header">
                 <h4>Requests by Weekday</h4>
@@ -1043,55 +989,10 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                     showNotification('Debug failed: ' + error.message, 'error');
                   }
                 }} 
-                className="admin-action-btn"
+                className="btn btn-secondary"
               >
-                <div className="action-icon bg-orange">
-                  <Download size={20} />
-                </div>
-                <div className="action-content">
-                  <div className="action-title">Debug Storage</div>
-                  <div className="action-desc">Check stored PTO data</div>
-                </div>
-              </button>
-              <button 
-                onClick={async () => {
-                  if (!window.confirm('⚠️ WARNING: This will DELETE ALL PTO data (requests + daily schedules). This cannot be undone. Are you sure?')) {
-                    return;
-                  }
-                  
-                  if (!window.confirm('Final confirmation: Delete ALL PTO data? Type YES to confirm.')) {
-                    return;
-                  }
-                  
-                  setLoading(true);
-                  try {
-                    const response = await invoke('cleanupPTODatabase', {
-                      adminId: currentUser.accountId,
-                      confirmDelete: true
-                    });
-                    
-                    if (response.success) {
-                      showNotification(`✅ Cleanup complete: ${response.data.deletedCount} items removed`);
-                      if (onRefresh) onRefresh();
-                    } else {
-                      showNotification(response.message || 'Cleanup failed', 'error');
-                    }
-                  } catch (error) {
-                    showNotification('Cleanup failed: ' + error.message, 'error');
-                  } finally {
-                    setLoading(false);
-                  }
-                }} 
-                className="admin-action-btn"
-                disabled={loading}
-              >
-                <div className="action-icon bg-red">
-                  <AlertTriangle size={20} />
-                </div>
-                <div className="action-content">
-                  <div className="action-title">🗑️ Cleanup PTO Database</div>
-                  <div className="action-desc">Delete ALL PTO requests and schedules</div>
-                </div>
+                <Download size={16} />
+                Debug Storage
               </button>
             </div>
           </div>

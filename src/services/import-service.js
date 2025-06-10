@@ -397,27 +397,48 @@ export const importService = {
           // Get users from your database instead of Jira API
           const users = await storage.get('users') || [];
           
-          // Create email lookup map for faster searching
+          // Create email lookup map for faster searching - IMPROVED VERSION
           const emailToUserMap = {};
           users.forEach(user => {
-            const email = (user.email_address || user.emailAddress || '').toLowerCase();
-            if (email) {
-              emailToUserMap[email] = {
-                accountId: user.jira_account_id || user.accountId || user.id,
-                displayName: user.display_name || user.displayName || user.name,
-                emailAddress: user.email_address || user.emailAddress
-              };
-            }
+            // Get all possible email fields and normalize them
+            const emails = [
+              user.email_address,
+              user.emailAddress, 
+              user.email
+            ].filter(Boolean); // Remove undefined/null values
+            
+            emails.forEach(email => {
+              const normalizedEmail = email.toLowerCase().trim();
+              if (normalizedEmail && normalizedEmail.includes('@')) {
+                emailToUserMap[normalizedEmail] = {
+                  accountId: user.jira_account_id || user.accountId || user.id,
+                  displayName: user.display_name || user.displayName || user.name,
+                  emailAddress: user.email_address || user.emailAddress || user.email,
+                  originalUser: user // Keep reference to original user for debugging
+                };
+              }
+            });
           });
           
           console.log(`🔍 Database lookup: Found ${users.length} users in database`);
+          console.log(`📧 Email lookup map has ${Object.keys(emailToUserMap).length} entries`);
+          
+          // DEBUG: Log first few entries to see what emails we have
+          const sampleEmails = Object.keys(emailToUserMap).slice(0, 5);
+          console.log(`📧 Sample emails in lookup:`, sampleEmails);
           
           // Check requester in your database
-          const requesterEmail = record.requester_email.toLowerCase();
+          const requesterEmail = record.requester_email.toLowerCase().trim();
           const requester = emailToUserMap[requesterEmail];
           
           if (!requester) {
-            recordErrors.push(`Requester not found in user database: ${record.requester_email}`);
+            // DEBUG: Show available emails that are similar
+            const similarEmails = Object.keys(emailToUserMap).filter(email => 
+              email.includes(requesterEmail.split('@')[0]) || 
+              requesterEmail.includes(email.split('@')[0])
+            );
+            
+            recordErrors.push(`Requester not found in user database: ${record.requester_email}${similarEmails.length > 0 ? ` (Similar: ${similarEmails.join(', ')})` : ''}`);
           } else {
             // Add requester details to enhanced record
             enhancedRecord.requester_id = requester.accountId;
@@ -427,11 +448,17 @@ export const importService = {
           }
           
           // Check manager in your database
-          const managerEmail = record.manager_email.toLowerCase();
+          const managerEmail = record.manager_email.toLowerCase().trim();
           const manager = emailToUserMap[managerEmail];
           
           if (!manager) {
-            recordErrors.push(`Manager not found in user database: ${record.manager_email}`);
+            // DEBUG: Show available emails that are similar
+            const similarEmails = Object.keys(emailToUserMap).filter(email => 
+              email.includes(managerEmail.split('@')[0]) || 
+              managerEmail.includes(email.split('@')[0])
+            );
+            
+            recordErrors.push(`Manager not found in user database: ${record.manager_email}${similarEmails.length > 0 ? ` (Similar: ${similarEmails.join(', ')})` : ''}`);
           } else {
             // Add manager details to enhanced record
             enhancedRecord.manager_id = manager.accountId;

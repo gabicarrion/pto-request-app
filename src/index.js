@@ -2239,7 +2239,62 @@ resolver.define('validatePTOImportData', async (req) => {
     };
   }
 });
-
+resolver.define('debugUserEmails', async (req) => {
+  try {
+    const { searchEmail } = req.payload || {};
+    const users = await storage.get('users') || [];
+    
+    console.log(`🔍 Debug: Searching for email: ${searchEmail}`);
+    console.log(`👥 Total users in database: ${users.length}`);
+    
+    // Show all users with their email fields
+    const userEmailInfo = users.map((user, index) => ({
+      index: index + 1,
+      id: user.id,
+      jira_account_id: user.jira_account_id,
+      display_name: user.display_name || user.displayName,
+      email_address: user.email_address,
+      emailAddress: user.emailAddress,
+      email: user.email
+    }));
+    
+    // If searching for specific email, show matches
+    if (searchEmail) {
+      const normalizedSearch = searchEmail.toLowerCase().trim();
+      const matches = users.filter(user => {
+        const emails = [user.email_address, user.emailAddress, user.email].filter(Boolean);
+        return emails.some(email => email.toLowerCase().trim() === normalizedSearch);
+      });
+      
+      console.log(`🎯 Found ${matches.length} matches for ${searchEmail}`);
+      
+      return {
+        success: true,
+        data: {
+          searchEmail,
+          totalUsers: users.length,
+          matches: matches.length,
+          matchedUsers: matches,
+          allUserEmails: userEmailInfo.slice(0, 10) // First 10 for debugging
+        }
+      };
+    }
+    
+    return {
+      success: true,
+      data: {
+        totalUsers: users.length,
+        userEmailInfo: userEmailInfo.slice(0, 10) // First 10 for debugging
+      }
+    };
+  } catch (error) {
+    console.error('❌ Debug user emails error:', error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
 // Clear import validation data - CHUNKED VERSION
 resolver.define('clearImportValidationData', async (req) => {
   try {
