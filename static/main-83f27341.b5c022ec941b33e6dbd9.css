@@ -2095,6 +2095,7 @@ main {
   gap: 1rem;
   margin-bottom: 1rem;
 }
+
 /* Responsive improvements */
 @media (max-width: 768px) {
   .summary-grid {
