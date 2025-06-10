@@ -2316,6 +2316,12 @@ resolver.define('checkPTOImportStatus', async (req) => {
 // Validate PTO Import Data
 resolver.define('validatePTOImportData', async (req) => {
   try {
+    console.log('🔍 DEBUG Backend: validatePTOImportData called');
+    console.log('🔍 DEBUG Backend: req.payload:', req.payload);
+
+    const payload = req.payload || {};
+    console.log('🔍 DEBUG Backend: payload keys:', Object.keys(payload));
+
     const { csvData, currentUser } = req.payload;
     console.log(`🔍 Validating ${csvData.length} PTO import records`);
     

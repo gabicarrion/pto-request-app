@@ -12,7 +12,10 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
 
   const handleFileSelect = async (event) => {
     const file = event.target.files[0];
+    console.log('🔍 DEBUG: File selected:', file);
+    
     if (!file) {
+      console.log('🔍 DEBUG: No file selected, resetting state');
       setImportFile(null);
       setImportData([]);
       setValidationResult(null);
@@ -27,29 +30,66 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
       reader.onload = async (e) => {
         try {
           const csvData = e.target.result;
-          const rows = csvData.split('\n');
-          const headers = rows[0].split(',').map(h => h.trim());
+          console.log('🔍 DEBUG: CSV data type:', typeof csvData);
+          console.log('🔍 DEBUG: CSV data length:', csvData ? csvData.length : 'undefined');
           
-          const parsedData = rows && rows.length > 1 ? rows.slice(1)
-          .filter(row => row && row.trim().length > 0) // Skip empty rows
-          .map((row, rowIndex) => {
-            try {
-              const values = row && row.split ? row.split(',').map(v => v ? v.trim().replace(/^"|"$/g, '') : '') : []; // Remove quotes
-              const record = {};
-              if (headers && Array.isArray(headers)) {
+          if (!csvData) {
+            throw new Error('No data read from file');
+          }
+          
+          const rows = csvData.split('\n');
+          console.log('🔍 DEBUG: Rows after split:', rows);
+          console.log('🔍 DEBUG: Rows length:', rows ? rows.length : 'undefined');
+          
+          if (!rows || rows.length === 0) {
+            throw new Error('No rows found in CSV');
+          }
+          
+          const headers = rows[0] ? rows[0].split(',').map(h => h ? h.trim() : '') : [];
+          console.log('🔍 DEBUG: Headers:', headers);
+          console.log('🔍 DEBUG: Headers length:', headers ? headers.length : 'undefined');
+          
+          if (!headers || headers.length === 0) {
+            throw new Error('No headers found in CSV');
+          }
+          
+          let parsedData = [];
+          
+          if (rows.length > 1) {
+            const dataRows = rows.slice(1);
+            console.log('🔍 DEBUG: Data rows:', dataRows);
+            console.log('🔍 DEBUG: Data rows length:', dataRows ? dataRows.length : 'undefined');
+            
+            for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
+              const row = dataRows[rowIndex];
+              console.log(`🔍 DEBUG: Processing row ${rowIndex}:`, row);
+              
+              if (!row || row.trim().length === 0) {
+                console.log(`🔍 DEBUG: Skipping empty row ${rowIndex}`);
+                continue;
+              }
+              
+              try {
+                const values = row.split(',').map(v => v ? v.trim().replace(/^"|"$/g, '') : '');
+                console.log(`🔍 DEBUG: Values for row ${rowIndex}:`, values);
+                
+                const record = {};
                 headers.forEach((header, index) => {
                   record[header] = index < values.length ? values[index] : '';
                 });
+                
+                console.log(`🔍 DEBUG: Record for row ${rowIndex}:`, record);
+                parsedData.push(record);
+              } catch (rowError) {
+                console.warn(`🔍 DEBUG: Error parsing row ${rowIndex + 2}:`, rowError);
               }
-              return record;
-            } catch (error) {
-              console.warn(`Error parsing row ${rowIndex + 2}:`, error);
-              return null;
             }
-          })
-          .filter(record => record !== null) : []; // Remove failed parsing attempts
+          }
           
-          if (parsedData.length === 0) {
+          console.log('🔍 DEBUG: Final parsed data:', parsedData);
+          console.log('🔍 DEBUG: Final parsed data length:', parsedData ? parsedData.length : 'undefined');
+          
+          if (!parsedData || parsedData.length === 0) {
             showNotification('No valid data found in CSV file', 'error');
             setImportData([]);
             return;
@@ -58,15 +98,23 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
           setImportData(parsedData);
           showNotification(`CSV file loaded with ${parsedData.length} records. Click "Validate Data" to proceed.`);
         } catch (error) {
-          console.error('CSV parsing error:', error);
-          showNotification('Failed to parse CSV file', 'error');
+          console.error('🔍 DEBUG: CSV parsing error:', error);
+          showNotification('Failed to parse CSV file: ' + error.message, 'error');
           setImportData([]);
         }
       };
+      
+      reader.onerror = (error) => {
+        console.error('🔍 DEBUG: FileReader error:', error);
+        showNotification('Failed to read file', 'error');
+        setImportFile(null);
+        setImportData([]);
+      };
+      
       reader.readAsText(file);
     } catch (error) {
-      console.error('File reading error:', error);
-      showNotification('Failed to read file', 'error');
+      console.error('🔍 DEBUG: File reading error:', error);
+      showNotification('Failed to read file: ' + error.message, 'error');
       setImportFile(null);
       setImportData([]);
     }
@@ -275,18 +323,45 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
   };
   
   const handleValidateData = async () => {
-    if (!importData || importData.length === 0) {
+    console.log('🔍 DEBUG: Starting validation');
+    console.log('🔍 DEBUG: importData:', importData);
+    console.log('🔍 DEBUG: importData type:', typeof importData);
+    console.log('🔍 DEBUG: importData is array:', Array.isArray(importData));
+    console.log('🔍 DEBUG: importData length:', importData ? importData.length : 'undefined');
+    
+    if (!importData) {
+      console.error('🔍 DEBUG: importData is null/undefined');
       showNotification('No data to validate', 'error');
       return;
     }
     
+    if (!Array.isArray(importData)) {
+      console.error('🔍 DEBUG: importData is not an array, type:', typeof importData);
+      showNotification('Invalid data format', 'error');
+      return;
+    }
+    
+    if (importData.length === 0) {
+      console.error('🔍 DEBUG: importData is empty array');
+      showNotification('No data to validate', 'error');
+      return;
+    }
+    
+    console.log('🔍 DEBUG: All validations passed, proceeding...');
+    
     // Set initial validation state to prevent flickering
+    const batchSize = 5;
+    const totalBatches = Math.ceil(importData.length / batchSize);
+    
+    console.log('🔍 DEBUG: Setting initial validation result');
+    console.log('🔍 DEBUG: totalBatches:', totalBatches);
+    
     setValidationResult({
       success: true,
       data: {
         isComplete: false,
         currentBatch: 0,
-        totalBatches: Math.ceil(importData.length / 5), // Use same batch size as validateBatch
+        totalBatches: totalBatches,
         initializing: true,
         validation: {
           validRecords: [],
@@ -301,6 +376,7 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
     // Give UI time to stabilize before starting the validation process
     await new Promise(resolve => setTimeout(resolve, 500));
     
+    console.log('🔍 DEBUG: Starting validateBatch(0)');
     // Start the validation process with the first batch
     validateBatch(0);
   };
