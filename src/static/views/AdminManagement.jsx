@@ -1014,6 +1014,85 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                 <Download size={16} />
                 Export Schedules
               </button>
+              <button 
+                onClick={async () => {
+                  try {
+                    const response = await invoke('debugStorage');
+                    console.log('🔍 DEBUG Storage Response:', response);
+                    
+                    if (response.success) {
+                      const summary = response.data.summary;
+                      showNotification(
+                        `Storage Debug: ${summary.ptoRequestCount} PTO requests, ${summary.ptoScheduleCount} daily schedules`,
+                        'info'
+                      );
+                      
+                      // Also test getPTORequests
+                      const ptoResponse = await invoke('getPTORequests');
+                      console.log('🔍 DEBUG getPTORequests Response:', ptoResponse);
+                      
+                      if (ptoResponse.success) {
+                        showNotification(
+                          `getPTORequests returned: ${ptoResponse.data?.length || 0} total events`,
+                          'info'
+                        );
+                      }
+                    }
+                  } catch (error) {
+                    console.error('Debug error:', error);
+                    showNotification('Debug failed: ' + error.message, 'error');
+                  }
+                }} 
+                className="admin-action-btn"
+              >
+                <div className="action-icon bg-orange">
+                  <Download size={20} />
+                </div>
+                <div className="action-content">
+                  <div className="action-title">Debug Storage</div>
+                  <div className="action-desc">Check stored PTO data</div>
+                </div>
+              </button>
+              <button 
+                onClick={async () => {
+                  if (!window.confirm('⚠️ WARNING: This will DELETE ALL PTO data (requests + daily schedules). This cannot be undone. Are you sure?')) {
+                    return;
+                  }
+                  
+                  if (!window.confirm('Final confirmation: Delete ALL PTO data? Type YES to confirm.')) {
+                    return;
+                  }
+                  
+                  setLoading(true);
+                  try {
+                    const response = await invoke('cleanupPTODatabase', {
+                      adminId: currentUser.accountId,
+                      confirmDelete: true
+                    });
+                    
+                    if (response.success) {
+                      showNotification(`✅ Cleanup complete: ${response.data.deletedCount} items removed`);
+                      if (onRefresh) onRefresh();
+                    } else {
+                      showNotification(response.message || 'Cleanup failed', 'error');
+                    }
+                  } catch (error) {
+                    showNotification('Cleanup failed: ' + error.message, 'error');
+                  } finally {
+                    setLoading(false);
+                  }
+                }} 
+                className="admin-action-btn"
+                disabled={loading}
+              >
+                <div className="action-icon bg-red">
+                  <AlertTriangle size={20} />
+                </div>
+                <div className="action-content">
+                  <div className="action-title">🗑️ Cleanup PTO Database</div>
+                  <div className="action-desc">Delete ALL PTO requests and schedules</div>
+                </div>
+              </button>
             </div>
           </div>
         </Modal>

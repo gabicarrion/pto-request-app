@@ -205,7 +205,7 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
       return;
     }
     
-    console.log('🔍 Starting optimized validation process...');
+    console.log('🔍 Starting database validation process...');
     setIsValidating(true);
     
     // Set initial state
@@ -215,15 +215,15 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
         isComplete: false,
         validationInProgress: true
       },
-      message: "Validating data format and user lookups..."
+      message: "Validating data format and looking up users in database..."
     });
     
     try {
-      // Single validation call - simplified process
+      // Single validation call using YOUR user database
       const response = await invoke('validatePTOImportData', {
         importData: importData,
         adminId: currentUser.accountId,
-        checkJiraUsers: true,
+        checkJiraUsers: true, // This now means "check user database"
         batchIndex: 0,
         batchSize: 50
       });
@@ -236,7 +236,7 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
         const invalidCount = response.data.validation?.invalidRecords || 0;
         
         showNotification(
-          `Validation complete! ${validCount} records ready for import. ${invalidCount > 0 ? `${invalidCount} records have errors.` : ''}`
+          `Database validation complete! ${validCount} records ready for import. ${invalidCount > 0 ? `${invalidCount} records have errors.` : ''}`
         );
       } else {
         showNotification(response.message || 'Validation failed', 'error');
@@ -356,8 +356,9 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
           <h3 className="modal-title">Import PTO Requests</h3>
           <button className="modal-close" onClick={async () => {
             try {
-              // Clear validation data before closing
-              if (currentUser?.accountId) {
+              // Only cleanup if there was actual validation data
+              if (validationResult && validationResult.success && currentUser?.accountId) {
+                console.log('🧹 Cleaning up validation data from modal close');
                 await invoke('clearImportValidationData', {
                   adminId: currentUser.accountId
                 });
@@ -365,7 +366,6 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
             } catch (error) {
               console.error('❌ Error clearing data on close:', error);
             }
-            
             
             onClose();
             await resetState();
@@ -387,8 +387,9 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
               <li>created_at - Optional: Creation timestamp (defaults to current time)</li>
             </ul>
             <div className="alert alert-info">
-              <p><strong>Note:</strong> The system will automatically look up user account IDs based on email addresses.</p>
+              <p><strong>Note:</strong> The system will look up user account IDs from your existing user database based on email addresses.</p>
               <p>Valid leave types: vacation, sick, personal, holiday, other leave type</p>
+              <p><strong>Make sure the email addresses in your CSV match the emails in your user database!</strong></p>
             </div>
             
             {/* Step 1: File Selection */}

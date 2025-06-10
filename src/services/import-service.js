@@ -391,41 +391,53 @@ export const importService = {
         recordErrors.push('Invalid status. Must be one of: pending, approved, declined, cancelled');
       }
       
-      // Check if users exist in Jira if requested
+      // Check if users exist in your database if requested
       if (checkJiraUsers && recordErrors.length === 0) {
         try {
-          // Check requester
-          let requester = userCache[record.requester_email];
-          if (!requester) {
-            requester = await this.getUserByEmail(record.requester_email);
-            if (requester) {
-              userCache[record.requester_email] = requester;
+          // Get users from your database instead of Jira API
+          const users = await storage.get('users') || [];
+          
+          // Create email lookup map for faster searching
+          const emailToUserMap = {};
+          users.forEach(user => {
+            const email = (user.email_address || user.emailAddress || '').toLowerCase();
+            if (email) {
+              emailToUserMap[email] = {
+                accountId: user.jira_account_id || user.accountId || user.id,
+                displayName: user.display_name || user.displayName || user.name,
+                emailAddress: user.email_address || user.emailAddress
+              };
             }
-          }
+          });
+          
+          console.log(`🔍 Database lookup: Found ${users.length} users in database`);
+          
+          // Check requester in your database
+          const requesterEmail = record.requester_email.toLowerCase();
+          const requester = emailToUserMap[requesterEmail];
           
           if (!requester) {
-            recordErrors.push(`Requester not found in Jira with email: ${record.requester_email}`);
+            recordErrors.push(`Requester not found in user database: ${record.requester_email}`);
           } else {
             // Add requester details to enhanced record
             enhancedRecord.requester_id = requester.accountId;
             enhancedRecord.requester_name = requester.displayName;
+            enhancedRecord.requester_email = requester.emailAddress;
+            console.log(`✅ Found requester: ${requester.displayName} (${requester.emailAddress})`);
           }
           
-          // Check manager
-          let manager = userCache[record.manager_email];
-          if (!manager) {
-            manager = await this.getUserByEmail(record.manager_email);
-            if (manager) {
-              userCache[record.manager_email] = manager;
-            }
-          }
+          // Check manager in your database
+          const managerEmail = record.manager_email.toLowerCase();
+          const manager = emailToUserMap[managerEmail];
           
           if (!manager) {
-            recordErrors.push(`Manager not found in Jira with email: ${record.manager_email}`);
+            recordErrors.push(`Manager not found in user database: ${record.manager_email}`);
           } else {
             // Add manager details to enhanced record
             enhancedRecord.manager_id = manager.accountId;
             enhancedRecord.manager_name = manager.displayName;
+            enhancedRecord.manager_email = manager.emailAddress;
+            console.log(`✅ Found manager: ${manager.displayName} (${manager.emailAddress})`);
           }
           
           // Add other enhanced fields
@@ -435,8 +447,13 @@ export const importService = {
           enhancedRecord.pto_request_id = record.pto_request_id || `pto-import-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
           enhancedRecord.import_date = new Date().toISOString();
           enhancedRecord.imported = true;
+          
+          // Keep original emails for reference
+          enhancedRecord.original_requester_email = record.requester_email;
+          enhancedRecord.original_manager_email = record.manager_email;
+          
         } catch (error) {
-          recordErrors.push(`Error checking Jira users: ${error.message}`);
+          recordErrors.push(`Error checking user database: ${error.message}`);
         }
       }
       

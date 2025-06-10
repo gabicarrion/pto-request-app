@@ -2088,6 +2088,14 @@ main {
   counter-reset: step-counter;
 }
 
+
+.admin-stats-grid{
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
 /* Responsive improvements */
 @media (max-width: 768px) {
   .summary-grid {

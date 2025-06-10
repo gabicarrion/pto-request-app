@@ -433,47 +433,38 @@ const PTOManagementApp = () => {
           </div>
           
           <div className="nav-tabs condensed">
-          {tabs.map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={async () => {
-                  // Clear validation data when switching tabs with proper error handling
+            {tabs.map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={async () => {
+                  // Clear validation data when switching tabs
                   try {
-                    if (currentUser && currentUser.accountId && typeof currentUser.accountId === 'string') {
-                      await invoke('clearImportValidationData', {
-                        adminId: currentUser.accountId
-                      });
-                    } else {
-                      console.warn('⚠️ Invalid currentUser for cleanup:', currentUser);
-                      // Try cleanup without adminId
-                      await invoke('clearImportValidationData', {});
-                    }
+                    await invoke('clearImportValidationData');
                   } catch (error) {
-                    console.warn('⚠️ Could not clear validation data during tab switch:', error);
-                    // Don't prevent tab switching if cleanup fails
+                    console.warn('⚠️ Could not clear validation data:', error);
                   }
                   setActiveTab(tab.id);
                 }}
-                className={`nav-tab${isActive ? ' active' : ''}${tab.id === 'admin' ? ' admin' : ''}${tab.id === 'manager' && !isAdmin ? ' manager' : ''}`}
-                title={tab.description}
-              >
-                <Icon size={18} />
-                <span>{tab.label}</span>
-                {tab.id === 'manager' && pendingRequests.length > 0 && (
-                  <span className="nav-tab-badge">{pendingRequests.length}</span>
-                )}
-                {tab.id === 'admin' && (
-                  <span className="nav-tab-label admin">Admin</span>
-                )}
-                {tab.id === 'manager' && !isAdmin && (
-                  <span className="nav-tab-label manager">Manager</span>
-                )}
-              </button>
-            );
-          })}
+                  className={`nav-tab${isActive ? ' active' : ''}${tab.id === 'admin' ? ' admin' : ''}${tab.id === 'manager' && !isAdmin ? ' manager' : ''}`}
+                  title={tab.description}
+                >
+                  <Icon size={18} />
+                  <span>{tab.label}</span>
+                  {tab.id === 'manager' && pendingRequests.length > 0 && (
+                    <span className="nav-tab-badge">{pendingRequests.length}</span>
+                  )}
+                  {tab.id === 'admin' && (
+                    <span className="nav-tab-label admin">Admin</span>
+                  )}
+                  {tab.id === 'manager' && !isAdmin && (
+                    <span className="nav-tab-label manager">Manager</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
           
           <div className="app-user-profile">

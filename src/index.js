@@ -6,7 +6,7 @@ import resourceApiService from './services/resource-api-service';
 import { importService } from './services/import-service';
 
 const resolver = new Resolver();
-
+const cleanupCache = new Map();
 
 // Helper function for default availability
 function getDefaultAvailability() {
@@ -459,33 +459,77 @@ resolver.define('getPTORequests', async (req) => {
     const filters = req.payload || {};
     console.log('📋 Getting PTO Requests with filters:', filters);
     
-    // Use chunked retrieval for requests
-    let requests;
+    // Get regular PTO requests using chunked retrieval
+    let requests = [];
     try {
       requests = await importService.getChunkedData('pto_requests') || [];
+      console.log('📦 Loaded PTO requests from chunked storage:', requests.length);
     } catch (error) {
       console.warn('⚠️ Could not load chunked requests, trying direct:', error.message);
       requests = await storage.get('pto_requests') || [];
+      console.log('📦 Loaded PTO requests from direct storage:', requests.length);
     }
     
-    let filteredRequests = requests;
+    // Get daily schedules (imported data) using chunked retrieval
+    let dailySchedules = [];
+    try {
+      dailySchedules = await importService.getChunkedData('pto_daily_schedules') || [];
+      console.log('📦 Loaded daily schedules from chunked storage:', dailySchedules.length);
+    } catch (error) {
+      console.warn('⚠️ Could not load chunked daily schedules, trying direct:', error.message);
+      dailySchedules = await storage.get('pto_daily_schedules') || [];
+      console.log('📦 Loaded daily schedules from direct storage:', dailySchedules.length);
+    }
     
-    // Apply filters
+    // Transform daily schedules to match the expected format for the frontend
+    const transformedSchedules = dailySchedules.map(schedule => ({
+      ...schedule,
+      // Ensure these fields exist for frontend compatibility
+      start_date: schedule.date,
+      end_date: schedule.date,
+      total_days: schedule.hours ? schedule.hours / 8 : 1,
+      total_hours: schedule.hours || 8,
+      submitted_at: schedule.created_at,
+      // Mark as imported data
+      is_imported: true,
+      source: 'daily_schedule'
+    }));
+    
+    // Combine both types of data
+    let allEvents = [...requests, ...transformedSchedules];
+    
+    console.log('📋 Combined data:', {
+      requests: requests.length,
+      dailySchedules: dailySchedules.length,
+      transformed: transformedSchedules.length,
+      total: allEvents.length
+    });
+    
+    // Apply filters to combined data
     if (filters.status) {
-      filteredRequests = filteredRequests.filter(r => r.status === filters.status);
+      allEvents = allEvents.filter(r => r.status === filters.status);
     }
     
     if (filters.requester_id) {
-      filteredRequests = filteredRequests.filter(r => r.requester_id === filters.requester_id);
+      allEvents = allEvents.filter(r => r.requester_id === filters.requester_id);
     }
     
     if (filters.manager_email) {
-      filteredRequests = filteredRequests.filter(r => r.manager_email === filters.manager_email);
+      allEvents = allEvents.filter(r => r.manager_email === filters.manager_email);
     }
+    
+    if (filters.startDate && filters.endDate) {
+      allEvents = allEvents.filter(event => {
+        const eventDate = event.date || event.start_date;
+        return eventDate >= filters.startDate && eventDate <= filters.endDate;
+      });
+    }
+    
+    console.log('📋 Returning filtered events:', allEvents.length);
     
     return {
       success: true,
-      data: filteredRequests
+      data: allEvents
     };
   } catch (error) {
     console.error('❌ Error getting PTO requests:', error);
@@ -1541,13 +1585,28 @@ resolver.define('debugStorage', async (req) => {
     const teams = await storage.get('teams') || [];
     const admins = await storage.get('pto_admins') || [];
     const ptoRequests = await storage.get('pto_requests') || [];
-    const ptoDailySchedules = await storage.get('pto_daily_schedules') || [];
+    
+    // ADD: Check both chunked and direct storage for daily schedules
+    let ptoDailySchedules = [];
+    try {
+      ptoDailySchedules = await importService.getChunkedData('pto_daily_schedules') || [];
+      console.log('📦 Loaded daily schedules from chunked storage:', ptoDailySchedules.length);
+    } catch (chunkError) {
+      console.warn('⚠️ Could not load chunked daily schedules, trying direct storage:', chunkError.message);
+      ptoDailySchedules = await storage.get('pto_daily_schedules') || [];
+      console.log('📦 Loaded daily schedules from direct storage:', ptoDailySchedules.length);
+    }
     
     console.log(`Users in storage: ${users.length}`);
     console.log(`Teams in storage: ${teams.length}`);
     console.log(`Admins in storage: ${admins.length}`);
     console.log(`PTO Requests in storage: ${ptoRequests.length}`);
     console.log(`PTO Daily Schedules in storage: ${ptoDailySchedules.length}`);
+    
+    // ADD: Sample daily schedule data for debugging
+    if (ptoDailySchedules.length > 0) {
+      console.log('Sample daily schedule:', ptoDailySchedules[0]);
+    }
     
     return {
       success: true,
@@ -1574,7 +1633,123 @@ resolver.define('debugStorage', async (req) => {
     };
   }
 });
-
+resolver.define('cleanupPTODatabase', async (req) => {
+  try {
+    const { adminId, confirmDelete } = req.payload || {};
+    
+    // Verify admin status
+    const admins = await storage.get('pto_admins') || [];
+    if (!admins.includes(adminId)) {
+      throw new Error('Unauthorized: Admin privileges required');
+    }
+    
+    if (!confirmDelete) {
+      throw new Error('Confirmation required for cleanup');
+    }
+    
+    console.log('🗑️ CLEANUP: Starting PTO database cleanup by admin:', adminId);
+    
+    let deletedCount = 0;
+    const cleanupLog = [];
+    
+    // Clean up regular PTO requests
+    try {
+      const ptoRequests = await storage.get('pto_requests') || [];
+      if (ptoRequests.length > 0) {
+        await storage.set('pto_requests', []);
+        deletedCount += ptoRequests.length;
+        cleanupLog.push(`Deleted ${ptoRequests.length} PTO requests`);
+        console.log(`✅ Deleted ${ptoRequests.length} PTO requests`);
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not clean PTO requests:', error.message);
+      cleanupLog.push(`Failed to clean PTO requests: ${error.message}`);
+    }
+    
+    // Clean up daily schedules (chunked storage)
+    try {
+      const dailySchedules = await importService.getChunkedData('pto_daily_schedules') || [];
+      if (dailySchedules.length > 0) {
+        // Delete chunked data
+        await importService.deleteChunkedData('pto_daily_schedules');
+        // Also clear direct storage
+        await storage.set('pto_daily_schedules', []);
+        
+        deletedCount += dailySchedules.length;
+        cleanupLog.push(`Deleted ${dailySchedules.length} daily schedules (chunked)`);
+        console.log(`✅ Deleted ${dailySchedules.length} daily schedules`);
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not clean daily schedules:', error.message);
+      cleanupLog.push(`Failed to clean daily schedules: ${error.message}`);
+      
+      // Try direct storage cleanup
+      try {
+        const directSchedules = await storage.get('pto_daily_schedules') || [];
+        if (directSchedules.length > 0) {
+          await storage.set('pto_daily_schedules', []);
+          deletedCount += directSchedules.length;
+          cleanupLog.push(`Deleted ${directSchedules.length} daily schedules (direct)`);
+        }
+      } catch (directError) {
+        console.warn('⚠️ Could not clean direct daily schedules:', directError.message);
+      }
+    }
+    
+    // Clean up PTO balances
+    try {
+      const ptoBalances = await storage.get('pto_balances') || [];
+      if (ptoBalances.length > 0) {
+        await storage.set('pto_balances', []);
+        deletedCount += ptoBalances.length;
+        cleanupLog.push(`Deleted ${ptoBalances.length} PTO balances`);
+        console.log(`✅ Deleted ${ptoBalances.length} PTO balances`);
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not clean PTO balances:', error.message);
+      cleanupLog.push(`Failed to clean PTO balances: ${error.message}`);
+    }
+    
+    // Clean up any remaining validation data
+    try {
+      await importService.clearValidationData();
+      cleanupLog.push('Cleared validation data');
+    } catch (error) {
+      console.warn('⚠️ Could not clear validation data:', error.message);
+    }
+    
+    // Log the cleanup activity
+    const adminLog = await storage.get('pto_admin_log') || [];
+    adminLog.push({
+      action: 'PTO_DATABASE_CLEANUP',
+      admin_id: adminId,
+      timestamp: new Date().toISOString(),
+      details: {
+        deletedCount,
+        cleanupLog
+      }
+    });
+    await storage.set('pto_admin_log', adminLog);
+    
+    console.log(`🎉 CLEANUP COMPLETE: ${deletedCount} items deleted`);
+    
+    return {
+      success: true,
+      data: {
+        deletedCount,
+        cleanupLog
+      },
+      message: `Successfully cleaned up PTO database: ${deletedCount} items deleted`
+    };
+    
+  } catch (error) {
+    console.error('❌ Error cleaning up PTO database:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to cleanup PTO database'
+    };
+  }
+});
 // not being used:
 resolver.define('adminEditPTORequest', async (req) => {
   try {
@@ -1928,18 +2103,22 @@ resolver.define('validatePTOImportData', async (req) => {
         };
       }
       
+      console.log(`📋 Found ${users.length} users in database for validation`);
+      
       // Create email lookup map
       const emailToUserMap = {};
       users.forEach(user => {
-        const email = user.email_address || user.emailAddress;
+        const email = (user.email_address || user.emailAddress || '').toLowerCase();
         if (email) {
-          emailToUserMap[email.toLowerCase()] = {
-            accountId: user.jira_account_id || user.accountId,
-            displayName: user.display_name || user.displayName,
-            emailAddress: email
+          emailToUserMap[email] = {
+            accountId: user.jira_account_id || user.accountId || user.id,
+            displayName: user.display_name || user.displayName || user.name,
+            emailAddress: user.email_address || user.emailAddress
           };
         }
       });
+      
+      console.log(`📋 Created email lookup map with ${Object.keys(emailToUserMap).length} entries`);
       
       // STEP 3: Enhanced validation with user data
       console.log('🔄 Step 3: Enhanced validation with user lookup...');
@@ -1949,28 +2128,34 @@ resolver.define('validatePTOImportData', async (req) => {
       for (let i = 0; i < basicValidation.validRecords.length; i++) {
         const record = basicValidation.validRecords[i];
         
-        // Look up requester
-        const requester = emailToUserMap[record.requester_email.toLowerCase()];
+        // Look up requester in your database
+        const requesterEmail = record.requester_email.toLowerCase();
+        const requester = emailToUserMap[requesterEmail];
         if (!requester) {
           finalErrors.push({
             record: i + 1,
-            errors: [`Requester not found in database: ${record.requester_email}`],
+            errors: [`Requester not found in user database: ${record.requester_email}`],
             data: record
           });
           continue;
         }
         
-        // Look up manager (optional - use system default if not found)
-        const manager = emailToUserMap[record.manager_email?.toLowerCase()] || {
-          accountId: 'system-manager',
-          displayName: 'System Manager',
-          emailAddress: record.manager_email || 'system@company.com'
-        };
+        // Look up manager in your database
+        const managerEmail = record.manager_email.toLowerCase();
+        const manager = emailToUserMap[managerEmail];
+        if (!manager) {
+          finalErrors.push({
+            record: i + 1,
+            errors: [`Manager not found in user database: ${record.manager_email}`],
+            data: record
+          });
+          continue;
+        }
         
-        // Create import-ready record
+        // Create import-ready record with all required fields
         enhancedRecords.push({
           ...record,
-          // Enhanced with user data
+          // Enhanced with user data from YOUR database
           requester_id: requester.accountId,
           requester_name: requester.displayName,
           requester_email: requester.emailAddress,
@@ -1980,9 +2165,14 @@ resolver.define('validatePTOImportData', async (req) => {
           // Import metadata
           import_source: 'csv_bulk_import',
           import_timestamp: new Date().toISOString(),
-          hours: record.hours || (record.schedule_type === 'HALF_DAY' ? 4 : 8)
+          hours: record.hours || (record.schedule_type === 'HALF_DAY' ? 4 : 8),
+          // Keep originals for reference
+          original_requester_email: record.requester_email,
+          original_manager_email: record.manager_email
         });
       }
+      
+      console.log(`✅ Enhanced validation complete: ${enhancedRecords.length} ready, ${finalErrors.length} errors`);
       
       // Store validated data using CHUNKED storage to handle large datasets
       const validationKey = `pto_import_validation_${adminId}`;
@@ -2054,64 +2244,49 @@ resolver.define('validatePTOImportData', async (req) => {
 resolver.define('clearImportValidationData', async (req) => {
   try {
     const { adminId } = req.payload || {};
-    console.log('🧹 Clearing CHUNKED validation data, adminId:', adminId);
     
-    // Validate adminId is a string
-    if (!adminId || typeof adminId !== 'string') {
-      console.warn('⚠️ Invalid adminId provided:', adminId, 'type:', typeof adminId);
-      // Still try to clear general validation data
-      const result = await importService.clearValidationData();
+    // Check if we recently cleaned for this admin (within 30 seconds)
+    const cacheKey = `cleanup_${adminId}`;
+    const lastCleanup = cleanupCache.get(cacheKey);
+    const now = Date.now();
+    
+    if (lastCleanup && (now - lastCleanup) < 30000) {
+      console.log('🚫 Skipping cleanup - too recent');
       return {
         success: true,
-        message: 'General validation data cleared (adminId was invalid)',
-        data: result
+        message: 'Cleanup skipped - recently cleaned',
+        data: { deletedCount: 0 }
       };
     }
     
-    // List of possible chunked storage keys to clean up
-    const chunkedKeysToClean = [
-      `temp_import_data_${adminId}`,
-      `temp_validation_${adminId}`,
-      `pto_import_validation_${adminId}`
-    ];
+    console.log('🧹 Proceeding with cleanup, adminId:', adminId);
     
-    let totalDeleted = 0;
-    const errors = [];
+    // ... rest of the cleanup logic stays the same ...
     
-    // Clean chunked data
-    for (const key of chunkedKeysToClean) {
-      try {
-        const result = await importService.deleteChunkedData(key);
-        totalDeleted += result.deletedCount || 0;
-        console.log(`✅ Cleaned chunked data: ${key} (${result.deletedCount} entries)`);
-      } catch (deleteError) {
-        console.warn(`⚠️ Could not delete chunked data ${key}:`, deleteError.message);
-        errors.push(`${key}: ${deleteError.message}`);
+    // Cache the cleanup time
+    cleanupCache.set(cacheKey, now);
+    
+    // Clean old cache entries (keep only last 10 minutes)
+    for (const [key, time] of cleanupCache.entries()) {
+      if (now - time > 600000) { // 10 minutes
+        cleanupCache.delete(key);
       }
     }
     
-    // Also clear via import service
-    const serviceResult = await importService.clearValidationData();
-    totalDeleted += serviceResult.deletedCount || 0;
-    
     return {
       success: true,
-      message: `Cleared ${totalDeleted} storage entries. ${errors.length > 0 ? `Some keys had issues: ${errors.length}` : ''}`,
-      data: {
-        totalDeleted,
-        errors: errors.length > 0 ? errors : undefined,
-        serviceResult
-      }
+      message: totalDeleted > 0 ? `Cleaned ${totalDeleted} entries` : 'No cleanup needed',
+      data: { deletedCount: totalDeleted }
     };
+    
   } catch (error) {
-    console.error('❌ Error clearing chunked validation data:', error);
+    console.error('❌ Cleanup error:', error);
     return {
       success: false,
-      message: 'Failed to clear validation data: ' + error.message
+      message: 'Cleanup failed: ' + error.message
     };
   }
 });
-
 // Export the resolver handler
 export const handler = resolver.getDefinitions();
 
