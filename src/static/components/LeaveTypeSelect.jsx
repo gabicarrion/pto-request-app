@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import Select from '@atlaskit/select';
 import TextArea from '@atlaskit/textarea';
 import Button from '@atlaskit/button';

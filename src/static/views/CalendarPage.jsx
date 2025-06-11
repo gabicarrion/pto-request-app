@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Filter, X, Calendar, Users, User } from 'lucide-react';
 import PTOSubmissionModal from '../components/PTOSubmissionModal';
 import { getLeaveTypeEmoji } from '../components/leaveTypeUtils';

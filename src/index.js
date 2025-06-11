@@ -1,6 +1,6 @@
 import Resolver from '@forge/resolver';
 import { storage } from '@forge/api';
-import api, { route } from '@forge/api';
+import api, { route, asUser } from '@forge/api';
 import teamUserService from './services/team-user-service';
 import resourceApiService from './services/resource-api-service';
 import { importService } from './services/import-service';
@@ -32,10 +32,15 @@ resolver.define('initializePTODatabase', async (req) => {
     const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances'];
     
     for (const table of tables) {
-      const existing = await storage.get(table);
-      if (!existing) {
-        await storage.set(table, []);
-        console.log(`✅ Initialized table: ${table}`);
+      try {
+        const existing = await storage.get(table);
+        if (!existing) {
+          await storage.set(table, []);
+          console.log(`✅ Initialized table: ${table}`);
+        }
+      } catch (storageError) {
+        console.error(`❌ Error initializing table ${table}:`, storageError);
+        // Continue with other tables even if one fails
       }
     }
     
@@ -55,38 +60,18 @@ resolver.define('initializePTODatabase', async (req) => {
 // Get Current User
 resolver.define('getCurrentUser', async (req) => {
   try {
-    console.log('🔍 Fetching current user...');
-    
     const response = await api.asUser().requestJira(route`/rest/api/3/myself`);
     
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    if (response.status !== 200) {
+      console.error('Error fetching current user:', response.status);
+      throw new Error(`Failed to fetch user: ${response.status}`);
     }
     
     const userData = await response.json();
-    
-    console.log('✅ Successfully fetched user data');
-    return {
-      success: true,
-      data: {
-        accountId: userData.accountId,
-        displayName: userData.displayName,
-        emailAddress: userData.emailAddress,
-        avatarUrl: userData.avatarUrls?.['48x48'] || userData.avatarUrls?.['32x32'] || null
-      }
-    };
-    
+    return userData;
   } catch (error) {
-    console.error('❌ Error fetching current user:', error);
-    
-    return {
-      success: false,
-      message: 'Failed to fetch current user: ' + error.message,
-      error: {
-        code: error.code || 'UNKNOWN_ERROR',
-        type: 'NETWORK_ERROR'
-      }
-    };
+    console.error('Error in getCurrentUser:', error);
+    throw error;
   }
 });
 
@@ -1190,7 +1175,7 @@ resolver.define("getProjectUsersPaginated", async ({ payload }) => {
   console.log(`[Backend] getProjectUsersPaginated called for project: ${projectKey}, startAt: ${startAt}, maxResults: ${maxResults}`);
   
   try {
-    const response = await asUser().requestJira(
+    const response = await api.asUser().requestJira(
       route`/rest/api/3/user/assignable/search?project=${projectKey}&startAt=${startAt}&maxResults=${maxResults}`
     );
     
@@ -1377,79 +1362,45 @@ resolver.define('getTeamAnalytics', async (req) => {
     };
   }
 });
+// Initialize PTO Database with Team Management
 resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
   try {
-    console.log('🔧 Initializing PTO Database with Enhanced Team Management...');
+    console.log('🔧 Initializing PTO Database with Team Management...');
     
-    // Initialize the original PTO database first
-    const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances', 'pto_admins'];
-    
-    for (const table of tables) {
-      const existing = await storage.get(table);
-      if (!existing) {
-        await storage.set(table, []);
-        console.log(`✅ Initialized table: ${table}`);
-      }
+    // First initialize the basic database
+    const basicInit = await resolver.resolve('initializePTODatabase', req);
+    if (!basicInit.success) {
+      return basicInit;
     }
     
-    // Initialize the enhanced team/user service
-    await teamUserService.initialize();
+    // Initialize team management specific tables
+    const teamTables = ['pto_teams', 'team_members', 'admin_users'];
     
-    // Set up default admin
-    let adminResult = null;
-    try {
-      const admins = await storage.get('pto_admins') || [];
-      const defaultAdminEmail = 'gabriela.carrion@rebelmouse.com';
-      
-      const userSearchResponse = await api.asUser().requestJira(
-        route`/rest/api/3/user/search?query=${defaultAdminEmail}&maxResults=1`
-      );
-      
-      if (userSearchResponse.ok) {
-        const users = await userSearchResponse.json();
-        if (users.length > 0) {
-          const adminAccountId = users[0].accountId;
-          
-          if (!admins.includes(adminAccountId)) {
-            admins.push(adminAccountId);
-            await storage.set('pto_admins', admins);
-            
-            adminResult = {
-              success: true,
-              message: `Default admin ${defaultAdminEmail} added successfully`
-            };
-          } else {
-            adminResult = {
-              success: true,
-              message: `${defaultAdminEmail} is already an admin`
-            };
-          }
+    for (const table of teamTables) {
+      try {
+        const existing = await storage.get(table);
+        if (!existing) {
+          await storage.set(table, []);
+          console.log(`✅ Initialized team table: ${table}`);
         }
+      } catch (storageError) {
+        console.error(`❌ Error initializing team table ${table}:`, storageError);
       }
-    } catch (adminError) {
-      console.warn('Could not set up default admin:', adminError);
-      adminResult = {
-        success: false,
-        message: adminError.message
-      };
     }
     
     return {
       success: true,
+      message: 'PTO Database with Team Management initialized successfully',
       data: {
-        pto: { success: true, message: 'PTO tables initialized' },
-        teamUser: { success: true, message: 'Team/User service initialized' },
-        admin: adminResult,
-        initialized: true,
-        timestamp: new Date().toISOString()
-      },
-      message: 'PTO Database with Enhanced Team Management initialized successfully'
+        basicInit: true,
+        teamManagement: true
+      }
     };
   } catch (error) {
-    console.error('❌ Error initializing PTO Database with Team Management:', error);
+    console.error('❌ Team management initialization failed:', error);
     return {
       success: false,
-      message: error.message || 'Failed to initialize database'
+      message: error.message
     };
   }
 });
@@ -2423,6 +2374,59 @@ resolver.define('clearImportValidationData', async (req) => {
     };
   }
 });
+
+// PTO Balances for current user
+resolver.define('getUserPTOBalances', async (req) => {
+  try {
+    const { accountId } = req.payload || {};
+    if (!accountId) {
+      throw new Error('accountId is required');
+    }
+    const currentYear = new Date().getFullYear();
+    const allBalances = await storage.get('pto_balances') || [];
+    const userBalances = allBalances.filter(b => b.user_id === accountId && b.year === currentYear);
+    // Group by leave type
+    const balancesByType = {};
+    userBalances.forEach(b => {
+      balancesByType[b.leave_type] = {
+        allocated_days: b.allocated_days,
+        used_days: b.used_days,
+        remaining_days: b.remaining_days,
+        year: b.year
+      };
+    });
+    return {
+      success: true,
+      data: balancesByType
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
+
+resolver.define('deletePTOBalance', async (req) => {
+  try {
+    const { user_id, leave_type, year } = req.payload || {};
+    await ptoService.deletePTOBalance({ user_id, leave_type, year });
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+resolver.define('importDatabase', async (req) => {
+  try {
+    const { table, data } = req.payload || {};
+    await ptoService.importDatabase({ table, data });
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
 // Export the resolver handler
 export const handler = resolver.getDefinitions();
 
@@ -2594,54 +2598,3 @@ export async function availabilityApiHandler(request) {
   }
 }
 
-// PTO Balances for current user
-resolver.define('getUserPTOBalances', async (req) => {
-  try {
-    const { accountId } = req.payload || {};
-    if (!accountId) {
-      throw new Error('accountId is required');
-    }
-    const currentYear = new Date().getFullYear();
-    const allBalances = await storage.get('pto_balances') || [];
-    const userBalances = allBalances.filter(b => b.user_id === accountId && b.year === currentYear);
-    // Group by leave type
-    const balancesByType = {};
-    userBalances.forEach(b => {
-      balancesByType[b.leave_type] = {
-        allocated_days: b.allocated_days,
-        used_days: b.used_days,
-        remaining_days: b.remaining_days,
-        year: b.year
-      };
-    });
-    return {
-      success: true,
-      data: balancesByType
-    };
-  } catch (error) {
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-
-resolver.define('deletePTOBalance', async (req) => {
-  try {
-    const { user_id, leave_type, year } = req.payload || {};
-    await ptoService.deletePTOBalance({ user_id, leave_type, year });
-    return { success: true };
-  } catch (error) {
-    return { success: false, message: error.message };
-  }
-});
-
-resolver.define('importDatabase', async (req) => {
-  try {
-    const { table, data } = req.payload || {};
-    await ptoService.importDatabase({ table, data });
-    return { success: true };
-  } catch (error) {
-    return { success: false, message: error.message };
-  }
-});

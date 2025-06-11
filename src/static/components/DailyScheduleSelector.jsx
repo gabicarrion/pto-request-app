@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import Select from '@atlaskit/select';
 import { DatePicker } from '@atlaskit/datetime-picker';
 import { format, eachDayOfInterval, parse } from 'date-fns';

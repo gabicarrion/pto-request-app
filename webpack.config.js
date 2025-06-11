@@ -4,7 +4,7 @@ const TerserPlugin = require('terser-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 
 module.exports = {
-  entry: './src/static/index.jsx', // Your main entry point
+  entry: './src/static/index.jsx',
   output: {
     path: path.resolve(__dirname, 'static'),
     filename: '[name].[contenthash].js',
@@ -16,14 +16,14 @@ module.exports = {
     minimizer: [new TerserPlugin({
       terserOptions: {
         compress: {
-          drop_console: false, // Keep console logs for debugging
+          drop_console: false,
         },
       },
     })],
     splitChunks: {
       chunks: 'all',
       minSize: 20000,
-      maxSize: 244000, // 244KB chunk size limit for Forge
+      maxSize: 244000,
       cacheGroups: {
         vendors: {
           test: /[\\/]node_modules[\\/]/,
@@ -46,7 +46,16 @@ module.exports = {
         use: {
           loader: 'babel-loader',
           options: {
-            presets: ['@babel/preset-env', '@babel/preset-react'],
+            presets: [
+              ['@babel/preset-env', {
+                targets: {
+                  browsers: ['last 2 versions']
+                }
+              }], 
+              ['@babel/preset-react', {
+                runtime: 'automatic'
+              }]
+            ],
             plugins: ['@babel/plugin-syntax-dynamic-import']
           }
         }
@@ -65,12 +74,24 @@ module.exports = {
       filename: '[name].[contenthash].css',
     }),
     new HtmlWebpackPlugin({
-      template: './src/static/index.html', // Correct path to your existing index.html
+      template: './src/static/index.html',
       filename: 'index.html',
       inject: 'body',
     })
   ],
   resolve: {
-    extensions: ['.js', '.jsx']
+    extensions: ['.js', '.jsx'],
+    alias: {
+      'react': path.resolve(__dirname, 'node_modules/react'),
+      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
+    },
+    fallback: {
+      "crypto": false,
+      "buffer": false,
+      "stream": false
+    }
+  },
+  externals: {
+    // Don't externalize React - let webpack bundle it
   }
 };

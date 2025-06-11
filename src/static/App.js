@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Calendar, Clock, Users, CheckCircle, User, Shield, UserCheck } from 'lucide-react';
 import { invoke } from '@forge/bridge';
 
@@ -90,16 +91,22 @@ const PTOManagementApp = () => {
   }, [currentUser, isAdmin, isViewingAsNonAdmin, viewAsUser]);
 
   // Initialize app with admin setup
-  // Initialize app with admin setup
   useEffect(() => {
     const initializeApp = async () => {
       setAppLoading(true);
       
-      // Add multiple retry attempts
+      // Add multiple retry attempts with exponential backoff
       let retries = 5;
+      let delay = 1000; // Start with 1 second
+      
       while (retries > 0) {
         try {
           console.log(`🔧 Initializing PTO App (attempt ${6 - retries}/5)...`);
+          
+          // Check if Forge bridge is available before proceeding
+          if (typeof invoke === 'undefined') {
+            throw new Error('Forge bridge not available');
+          }
           
           const dbResult = await invoke('initializePTODatabaseWithTeamManagement');
           if (!dbResult.success) {
@@ -117,12 +124,16 @@ const PTOManagementApp = () => {
           
         } catch (error) {
           retries--;
-          if (error.message.includes('window is not defined') && retries > 0) {
-            console.warn(`⚠️ Forge not ready, retrying in 1 second... (${retries} attempts left)`);
-            await new Promise(resolve => setTimeout(resolve, 1000));
+          if ((error.message.includes('window is not defined') || 
+              error.message.includes('Forge bridge not available')) && retries > 0) {
+            console.warn(`⚠️ Forge not ready, retrying in ${delay/1000} second(s)... (${retries} attempts left)`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            delay = Math.min(delay * 1.5, 5000); // Exponential backoff, max 5 seconds
           } else {
             console.error('❌ App initialization failed:', error);
-            showNotification('Failed to initialize app: ' + error.message, 'error');
+            if (typeof showNotification === 'function') {
+              showNotification('Failed to initialize app: ' + error.message, 'error');
+            }
             break;
           }
         }
@@ -131,8 +142,8 @@ const PTOManagementApp = () => {
       setAppLoading(false);
     };
 
-    // Wait a bit longer before starting
-    const timer = setTimeout(initializeApp, 1000);
+    // Wait for DOM and Forge to be ready
+    const timer = setTimeout(initializeApp, 2000); // Increased delay to 2 seconds
     return () => clearTimeout(timer);
   }, []);
 

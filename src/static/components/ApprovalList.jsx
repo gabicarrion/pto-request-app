@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import Button from '@atlaskit/button';
 import Spinner from '@atlaskit/spinner';

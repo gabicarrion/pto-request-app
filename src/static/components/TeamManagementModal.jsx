@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import UserPicker from './UserPicker';
 import { User, UserPlus, Download, RefreshCw, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';

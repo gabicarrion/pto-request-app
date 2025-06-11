@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import { X, Calendar, Clock } from 'lucide-react';
 import { invoke } from '@forge/bridge';
 

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useState, useEffect } from 'react';
 import { RefreshCw, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
 
 const NetworkErrorHandler = ({ 

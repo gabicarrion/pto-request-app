@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { CheckCircle, AlertCircle, XCircle } from 'lucide-react';
 
 const StatusBadge = ({ status }) => {
