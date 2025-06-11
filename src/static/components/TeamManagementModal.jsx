@@ -53,7 +53,9 @@ function TeamManagementModal({
     employmentType: 'full-time',
     hireDate: '',
     teamMemberships: [],
-    capacity: 40
+    capacity: 40,
+    manager: '',
+    executiveManager: ''
   });
 
   const [availabilityData, setAvailabilityData] = useState([
@@ -230,7 +232,9 @@ function TeamManagementModal({
       employmentType: 'full-time',
       hireDate: '',
       teamMemberships: [],
-      capacity: 40
+      capacity: 40,
+      manager: '',
+      executiveManager: ''
     });
     setEditingUser(null);
     setActiveSubTab('form');
@@ -259,7 +263,9 @@ function TeamManagementModal({
       employmentType: 'full-time',
       hireDate: '',
       teamMemberships: [],
-      capacity: 40
+      capacity: 40,
+      manager: '',
+      executiveManager: ''
     });
     setAvailabilityData([
       { dayOfWeek: 1, dayName: 'Monday', isWorkingDay: true, startTime: '09:00', endTime: '17:00', hoursPerDay: 8 },
@@ -295,20 +301,15 @@ function TeamManagementModal({
   // Team handlers
   const handleEditTeam = (team) => {
     setEditingTeam(team);
-    
     let manager = null;
     if (team.manager) {
-      if (typeof team.manager === 'string') {
-        manager = users.find(user => 
-          user.display_name === team.manager || 
-          user.displayName === team.manager ||
-          user.name === team.manager
-        ) || null;
-      } else if (typeof team.manager === 'object') {
-        manager = team.manager;
-      }
+      manager = users.find(
+        u =>
+          u.jira_account_id === team.manager ||
+          u.accountId === team.manager ||
+          u.id === team.manager
+      ) || null;
     }
-
     setTeamFormData({
       name: team.name || '',
       description: team.description || '',
@@ -352,7 +353,9 @@ function TeamManagementModal({
         id: editingTeam?.id,
         name: teamFormData.name,
         description: teamFormData.description,
-        manager: teamFormData.manager,
+        manager: teamFormData.manager
+          ? (teamFormData.manager.jira_account_id || teamFormData.manager.accountId || teamFormData.manager.id || null)
+          : null,
         department: teamFormData.department,
         color: teamFormData.color,
         members: editingTeam?.members || []
@@ -401,7 +404,9 @@ function TeamManagementModal({
       hireDate: user.hire_date || user.hireDate || '',
       teamMemberships: user.team_memberships || [],
       capacity: user.capacity || 40,
-      isAdmin: user.isAdmin === true
+      isAdmin: user.isAdmin === true,
+      manager: user.manager || '',
+      executiveManager: user.executive_manager || ''
     });
     
     if (user.availability && Array.isArray(user.availability)) {
@@ -476,7 +481,9 @@ function TeamManagementModal({
         team_memberships: userFormData.teamMemberships,
         capacity: userFormData.capacity,
         availability: availabilityData,
-        isAdmin: newIsAdmin
+        isAdmin: newIsAdmin,
+        manager: userFormData.manager,
+        executive_manager: userFormData.executiveManager
       };
       
       console.log('Submitting user:', userData);
@@ -580,7 +587,7 @@ function TeamManagementModal({
   const columns = [
     'type', 'id', 'name', 'jira_account_id', 'first_name', 'last_name', 'display_name',
     'email', 'employment_type', 'hire_date', 'team_memberships', 'capacity',
-    'department', 'description', 'color', 'manager', 'isAdmin'
+    'department', 'description', 'color', 'manager', 'executive_manager', 'isAdmin'
   ];
 
   const handleExportCSV = () => {
@@ -601,6 +608,7 @@ function TeamManagementModal({
       description: team.description || '',
       color: team.color || '',
       manager: team.manager || '',
+      executive_manager: '',
       isAdmin: ''
     }));
 
@@ -622,7 +630,8 @@ function TeamManagementModal({
       department: user.department || '',
       description: '',
       color: '',
-      manager: '',
+      manager: user.manager || '',
+      executive_manager: user.executive_manager || '',
       isAdmin: user.isAdmin === true ? 'TRUE' : 'FALSE'
     }));
 
@@ -694,7 +703,9 @@ function TeamManagementModal({
                 employmentType: row.employment_type,
                 team_memberships,
                 capacity: row.capacity,
-                isAdmin: row.isAdmin === 'TRUE' || row.isAdmin === 'true'
+                isAdmin: row.isAdmin === 'TRUE' || row.isAdmin === 'true',
+                manager: row.manager || '',
+                executive_manager: row.executive_manager || ''
               });
             }
           }
@@ -768,6 +779,17 @@ function TeamManagementModal({
       emailAddress: manager.emailAddress || manager.email_address,
       avatarUrl: manager.avatarUrl || manager.avatar_url,
     };
+  };
+
+  const getManagerName = (managerId) => {
+    if (!managerId) return '-';
+    const user = users.find(
+      u =>
+        u.jira_account_id === managerId ||
+        u.accountId === managerId ||
+        u.id === managerId
+    );
+    return user ? (user.display_name || user.displayName || user.name) : managerId;
   };
 
   return (
@@ -859,78 +881,47 @@ function TeamManagementModal({
                       </button>
                     </div>
                   ) : (
-                    <div className="team-management-teams-grid">
-                      {teams.map(team => {
-                        const teamMembers = getTeamMembers(team.id);
-                        return (
-                          <div key={team.id} className="team-management-team-card" style={{ borderLeftColor: team.color }}>
-                            <div className="team-management-team-header">
-                              <h4>{team.name}</h4>
-                              <div className="team-management-team-actions">
-                                <button 
-                                  className="btn btn-sm btn-secondary"
-                                  onClick={() => handleEditTeam(team)}
-                                  disabled={loading}
-                                >
-                                  Edit
-                                </button>
-                                <button 
-                                  className="btn btn-sm btn-danger"
-                                  onClick={() => handleDeleteTeam(team.id, team.name)}
-                                  disabled={loading}
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            </div>
-                            
-                            {team.description && (
-                              <p className="team-management-team-description">{team.description}</p>
-                            )}
-                            
-                            <div className="team-management-team-meta">
-                              {team.department && (
-                                <span className="team-management-team-department">📁 {team.department}</span>
-                              )}
-                              {(team.manager || team.manager?.displayName) && (
-                                <span className="team-management-team-lead">👤 {team.manager?.displayName}</span>
-                              )}
-                              <span className="team-management-member-count">
-                                {teamMembers.length} members
-                              </span>
-                            </div>
-
-                            {teamMembers.length > 0 && (
-                              <div className="team-management-team-members-preview">
-                                <h5>Members:</h5>
-                                <div className="team-management-members-list">
-                                  {teamMembers.slice(0, 3).map(member => (
-                                    <div key={member.id} className="team-management-member-preview">
-                                      <div className="team-management-member-avatar-small">
-                                        {member.avatar_url || member.avatarUrl ? (
-                                          <img src={member.avatar_url || member.avatarUrl} alt={member.display_name || member.displayName} />
-                                        ) : (
-                                          <div className="team-management-avatar-placeholder-small">
-                                            {(member.display_name || member.displayName || member.name)?.charAt(0) || '?'}
-                                          </div>
-                                        )}
-                                      </div>
-                                      <span className="team-management-member-name-small">
-                                        {member.display_name || member.displayName || member.name}
-                                      </span>
-                                    </div>
-                                  ))}
-                                  {teamMembers.length > 3 && (
-                                    <div className="team-management-more-members">
-                                      +{teamMembers.length - 3} more
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                    <div className="requests-table-wrapper">
+                      <table className="requests-table">
+                        <thead>
+                          <tr>
+                            <th>Team Name</th>
+                            <th>Department</th>
+                            <th>Manager</th>
+                            <th>Members</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {teams.map(team => {
+                            const teamMembers = getTeamMembers(team.id);
+                            return (
+                              <tr key={team.id}>
+                                <td>{team.name}</td>
+                                <td>{team.department || '-'}</td>
+                                <td>{getManagerName(team.manager)}</td>
+                                <td>{teamMembers.length}</td>
+                                <td>
+                                  <button 
+                                    className="btn btn-sm btn-secondary"
+                                    onClick={() => handleEditTeam(team)}
+                                    disabled={loading}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button 
+                                    className="btn btn-sm btn-danger"
+                                    onClick={() => handleDeleteTeam(team.id, team.name)}
+                                    disabled={loading}
+                                  >
+                                    Delete
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
@@ -969,12 +960,13 @@ function TeamManagementModal({
                     <div className="form-group">
                       <label htmlFor="team-manager">Manager</label>
                       <UserPicker
-                        selectedUser={teamFormData.manager}
-                        onSelect={handleManagerChange}
+                        selectedUser={teamFormData.manager ? users.find(u => u.id === teamFormData.manager) || null : null}
+                        onSelect={user => handleManagerChange(user ? user.id : '')}
                         placeholder="Search and select manager"
                         disabled={loading}
                         error={errors.manager}
-                        useBackendSearch={true}
+                        useBackendSearch={false}
+                        allUsers={users}
                       />
                       {errors.manager && <span className="form-error-text">{errors.manager}</span>}
                     </div>
@@ -1080,34 +1072,36 @@ function TeamManagementModal({
                       Delete Selected Users ({selectedUserIds.length})
                     </button>
                   )}
-                  <table className="user-table">
-                    <thead>
-                      <tr>
-                        <th><input type="checkbox" checked={selectedUserIds.length === users.length && users.length > 0} onChange={e => setSelectedUserIds(e.target.checked ? users.map(u => u.id) : [])} /></th>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>Teams</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {users.map(user => (
-                        <tr key={user.id}>
-                          <td><input type="checkbox" checked={selectedUserIds.includes(user.id)} onChange={e => setSelectedUserIds(e.target.checked ? [...selectedUserIds, user.id] : selectedUserIds.filter(id => id !== user.id))} /></td>
-                          <td>{user.display_name || user.displayName || user.name}</td>
-                          <td>{user.email_address || user.emailAddress || '-'}</td>
-                          <td>{(user.team_memberships || []).map(tm => {
-                            const t = teams.find(team => team.id === tm.team_id);
-                            return t ? `${t.name} (${tm.role})` : tm.team_id;
-                          }).join(', ')}</td>
-                          <td>
-                            <button className="btn btn-sm btn-secondary" onClick={() => handleEditUser(user)} disabled={loading}>Edit</button>
-                            <button className="btn btn-sm btn-danger" onClick={() => handleDeleteUser(user.id, user.display_name || user.displayName || user.name)} disabled={loading}>Delete</button>
-                          </td>
+                  <div className="requests-table-wrapper">
+                    <table className="requests-table">
+                      <thead>
+                        <tr>
+                          <th><input type="checkbox" checked={selectedUserIds.length === users.length && users.length > 0} onChange={e => setSelectedUserIds(e.target.checked ? users.map(u => u.id) : [])} /></th>
+                          <th>Name</th>
+                          <th>Email</th>
+                          <th>Teams</th>
+                          <th>Actions</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {users.map(user => (
+                          <tr key={user.id}>
+                            <td><input type="checkbox" checked={selectedUserIds.includes(user.id)} onChange={e => setSelectedUserIds(e.target.checked ? [...selectedUserIds, user.id] : selectedUserIds.filter(id => id !== user.id))} /></td>
+                            <td>{user.display_name || user.displayName || user.name}</td>
+                            <td>{user.email_address || user.emailAddress || '-'}</td>
+                            <td>{(user.team_memberships || []).map(tm => {
+                              const t = teams.find(team => team.id === tm.team_id);
+                              return t ? `${t.name} (${tm.role})` : tm.team_id;
+                            }).join(', ')}</td>
+                            <td>
+                              <button className="btn btn-sm btn-secondary" onClick={() => handleEditUser(user)} disabled={loading}>Edit</button>
+                              <button className="btn btn-sm btn-danger" onClick={() => handleDeleteUser(user.id, user.display_name || user.displayName || user.name)} disabled={loading}>Delete</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                   {/* Bulk Add to Team Modal */}
                   {showBulkTeamModal && (
                     <div className="modal-overlay">
@@ -1273,7 +1267,7 @@ function TeamManagementModal({
                     <label>Teams & Roles</label>
                     {teams.map(team => {
                       const membership = userFormData.teamMemberships.find(tm => tm.team_id === team.id);
-                      const hasManager = teamHasManager(team.id);
+                      const hasManager = users.some(u => (u.team_memberships || []).some(tm => tm.team_id === team.id && tm.role === 'Manager'));
                       return (
                         <div key={team.id} style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
                           <input
@@ -1283,10 +1277,7 @@ function TeamManagementModal({
                               if (e.target.checked) {
                                 setUserFormData(prev => ({
                                   ...prev,
-                                  teamMemberships: [...prev.teamMemberships, { 
-                                    team_id: team.id, 
-                                    role: hasManager ? 'Member' : 'Manager' 
-                                  }]
+                                  teamMemberships: [...prev.teamMemberships, { team_id: team.id, role: hasManager ? 'Member' : 'Manager' }]
                                 }));
                               } else {
                                 setUserFormData(prev => ({
@@ -1350,6 +1341,30 @@ function TeamManagementModal({
                       />
                       {' '}Admin User
                     </label>
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="manager">Manager</label>
+                    <UserPicker
+                      selectedUser={userFormData.manager ? users.find(u => u.id === userFormData.manager) || null : null}
+                      onSelect={user => setUserFormData(prev => ({ ...prev, manager: user ? user.id : '' }))}
+                      placeholder="Select manager"
+                      users={users}
+                      allUsers={users}
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="executiveManager">Executive Manager</label>
+                    <UserPicker
+                      selectedUser={userFormData.executiveManager ? users.find(u => u.id === userFormData.executiveManager) || null : null}
+                      onSelect={user => setUserFormData(prev => ({ ...prev, executiveManager: user ? user.id : '' }))}
+                      placeholder="Select executive manager"
+                      users={users}
+                      allUsers={users}
+                      disabled={loading}
+                    />
                   </div>
 
                   {/* Availability Section */}

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { Calendar, Clock, Users, CheckCircle, User, Shield, UserCheck } from 'lucide-react';
 import { invoke } from '@forge/bridge';
@@ -91,45 +90,50 @@ const PTOManagementApp = () => {
   }, [currentUser, isAdmin, isViewingAsNonAdmin, viewAsUser]);
 
   // Initialize app with admin setup
+  // Initialize app with admin setup
   useEffect(() => {
     const initializeApp = async () => {
       setAppLoading(true);
-      try {
-        console.log('🔧 Initializing PTO App with Admin Setup...');
-        
-        // Initialize database and set up default admin
-        const dbResult = await invoke('initializePTODatabaseWithTeamManagement');
-        if (!dbResult.success) {
-          console.warn('Admin setup failed, trying regular init:', dbResult.message);
-          // Fallback to regular initialization
-          const fallbackResult = await invoke('initializePTODatabase');
-          if (!fallbackResult.success) {
-            throw new Error(fallbackResult.message);
-          }
-        } else {
-          console.log('✅ PTO App and Admin initialized:', dbResult.data);
-        }
-        
-        // Clear any stale import validation data
+      
+      // Add multiple retry attempts
+      let retries = 5;
+      while (retries > 0) {
         try {
-          await invoke('clearImportValidationData');
-          console.log('✅ Cleared any stale import validation data on app start');
-        } catch (clearError) {
-          console.warn('⚠️ Could not clear import validation data:', clearError);
-          // Non-fatal error, continue initialization
+          console.log(`🔧 Initializing PTO App (attempt ${6 - retries}/5)...`);
+          
+          const dbResult = await invoke('initializePTODatabaseWithTeamManagement');
+          if (!dbResult.success) {
+            console.warn('Admin setup failed, trying regular init:', dbResult.message);
+            const fallbackResult = await invoke('initializePTODatabase');
+            if (!fallbackResult.success) {
+              throw new Error(fallbackResult.message);
+            }
+          } else {
+            console.log('✅ PTO App and Admin initialized:', dbResult.data);
+          }
+          
+          console.log('✅ PTO App initialization complete');
+          break; // Success, exit retry loop
+          
+        } catch (error) {
+          retries--;
+          if (error.message.includes('window is not defined') && retries > 0) {
+            console.warn(`⚠️ Forge not ready, retrying in 1 second... (${retries} attempts left)`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } else {
+            console.error('❌ App initialization failed:', error);
+            showNotification('Failed to initialize app: ' + error.message, 'error');
+            break;
+          }
         }
-        
-        console.log('✅ PTO App initialization complete');
-        
-      } catch (error) {
-        console.error('❌ App initialization failed:', error);
-        showNotification('Failed to initialize app: ' + error.message, 'error');
-      } finally {
-        setAppLoading(false);
       }
+      
+      setAppLoading(false);
     };
 
-    initializeApp();
+    // Wait a bit longer before starting
+    const timer = setTimeout(initializeApp, 1000);
+    return () => clearTimeout(timer);
   }, []);
 
   const showNotification = (message, type = 'success') => {

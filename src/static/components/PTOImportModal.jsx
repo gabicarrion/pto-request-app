@@ -9,6 +9,7 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
   const [isValidating, setIsValidating] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  const [confirmReplace, setConfirmReplace] = useState(false);
 
   const handleFileSelect = async (event) => {
     const file = event.target.files[0];
@@ -204,7 +205,11 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
       showNotification('No data to validate', 'error');
       return;
     }
-    
+      // Check import size limit
+    if (importData.length > 50) {
+      showNotification(`Import size too large: ${importData.length} records. Please split into batches of 50 or fewer records.`, 'error');
+      return;
+    }
     console.log('🔍 Starting database validation process...');
     setIsValidating(true);
     
@@ -264,16 +269,28 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
       success: true,
       inProgress: true,
       message: "Starting import process...",
-      data: { importedRecords: 0, totalRecords: validationResult.data.validation?.validRecords?.length || 0 }
+      data: { importedRecords: 0, totalRecords: validationResult.data.validation?.validRecordsCount || 0 }
     });
     
     try {
       showNotification('Starting import process...');
       
-      // Use streamlined import with stored validation
+      // FORCE FRESH IMPORT: Clear any old stored validation first
+      console.log('🧹 Clearing any old stored validation data...');
+      await invoke('clearImportValidationData', { adminId: currentUser.accountId });
+      
+      // Use the current validated records directly instead of stored validation
+      const currentValidatedRecords = validationResult.data.validation?.validRecords || [];
+      const recordCount = validationResult.data.validation?.validRecordsCount || currentValidatedRecords.length;
+      
+      console.log(`📥 Importing ${recordCount} records directly (bypassing stored validation)`);
+      
+      // Import using the current validation data, not stored data
       const response = await invoke('importPTODailySchedules', { 
         adminId: currentUser.accountId,
-        useStoredValidation: true
+        importData: currentValidatedRecords,  // Use current data
+        skipValidation: true,                 // Skip validation since we already did it
+        useStoredValidation: false           // Don't use stored validation
       });
       
       setImportResult({
@@ -458,11 +475,13 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
                         </div>
                         <div className="summary-item">
                           <span className="summary-label">Ready:</span>
-                          <span className="summary-value success">{validationResult.data.validation.validRecords?.length || 0}</span>
+                          <span className="summary-value success">
+                            {validationResult.data.validation.validRecordsCount || validationResult.data.validation.validRecords?.length || 0}
+                          </span>
                         </div>
                         <div className="summary-item">
                           <span className="summary-label">Errors:</span>
-                          <span className="summary-value error">{validationResult.data.validation.invalidRecords || 0}</span>
+                          <span className="summary-value error">{validationResult.data.validation.invalidRecords || validationResult.data.validation.errors?.length || 0}</span>
                         </div>
                       </div>
                       
@@ -494,11 +513,25 @@ const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImpo
             </div>
             {/* Step 3: Import Data */}
             <div className="import-step">
+            <div className="import-warning">
+              <div className="alert alert-warning">
+                <strong>Important:</strong> This import will REPLACE all existing daily schedules. 
+                Current database contains {validationResult?.data?.validation?.totalRecords || 0} records.
+              </div>
+              <label className="checkbox-container">
+                <input 
+                  type="checkbox" 
+                  checked={confirmReplace}
+                  onChange={(e) => setConfirmReplace(e.target.checked)}
+                />
+                I understand this will replace existing daily schedule data
+              </label>
+            </div>
               <h4>Step 3: Import Data</h4>
               <button 
                 onClick={handleImportPTOs}
                 className="btn btn-primary"
-                disabled={!validationResult?.success || isImporting}
+                disabled={!validationResult?.success || isImporting || !confirmReplace}
               >
                 {isImporting ? 'IMPORTING...' : 'Import Data'}
               </button>

@@ -212,6 +212,8 @@ export class TeamUserService {
         avatar_url: userData?.avatar_url || userData?.avatarUrl || '',
         status: userData?.status || 'active',
         isAdmin: userData?.isAdmin === true,
+        manager: userData?.manager || '',
+        executive_manager: userData?.executive_manager || '',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         created_by: userData?.createdBy || null
@@ -264,6 +266,8 @@ export class TeamUserService {
         avatar_url: userData.avatar_url || userData.avatarUrl || users[userIndex].avatar_url,
         status: userData.status || users[userIndex].status,
         isAdmin: userData.isAdmin !== undefined ? userData.isAdmin : users[userIndex].isAdmin === true,
+        manager: userData.manager !== undefined ? userData.manager : users[userIndex].manager || '',
+        executive_manager: userData.executive_manager !== undefined ? userData.executive_manager : users[userIndex].executive_manager || '',
         updated_at: new Date().toISOString(),
         updated_by: userData.updatedBy || null
       };

@@ -4,6 +4,7 @@ import api, { route } from '@forge/api';
 import teamUserService from './services/team-user-service';
 import resourceApiService from './services/resource-api-service';
 import { importService } from './services/import-service';
+import ptoService from './database/pto-service';
 
 const resolver = new Resolver();
 const cleanupCache = new Map();
@@ -56,72 +57,31 @@ resolver.define('getCurrentUser', async (req) => {
   try {
     console.log('🔍 Fetching current user...');
     
-    // Add timeout and retry logic
-    const maxRetries = 3;
-    let lastError;
+    const response = await api.asUser().requestJira(route`/rest/api/3/myself`);
     
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`Attempt ${attempt}/${maxRetries} to fetch user`);
-        
-        // Use a longer timeout for the request
-        const response = await Promise.race([
-          api.asUser().requestJira(route`/rest/api/3/myself`),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Request timeout after 30 seconds')), 30000)
-          )
-        ]);
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const userData = await response.json();
-        
-        console.log('✅ Successfully fetched user data');
-        return {
-          success: true,
-          data: {
-            accountId: userData.accountId,
-            displayName: userData.displayName,
-            emailAddress: userData.emailAddress,
-            avatarUrl: userData.avatarUrls?.['48x48'] || userData.avatarUrls?.['32x32'] || null
-          }
-        };
-        
-      } catch (error) {
-        lastError = error;
-        console.warn(`❌ Attempt ${attempt} failed:`, error.message);
-        
-        if (attempt < maxRetries) {
-          // Wait before retry (exponential backoff)
-          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
-          console.log(`⏳ Waiting ${delay}ms before retry...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     
-    // If all retries failed, throw the last error
-    throw lastError;
+    const userData = await response.json();
+    
+    console.log('✅ Successfully fetched user data');
+    return {
+      success: true,
+      data: {
+        accountId: userData.accountId,
+        displayName: userData.displayName,
+        emailAddress: userData.emailAddress,
+        avatarUrl: userData.avatarUrls?.['48x48'] || userData.avatarUrls?.['32x32'] || null
+      }
+    };
     
   } catch (error) {
-    console.error('❌ Error fetching current user after all retries:', error);
-    
-    // Return a more specific error message based on the error type
-    let errorMessage = 'Failed to fetch current user: ';
-    
-    if (error.code === 'UND_ERR_CONNECT_TIMEOUT' || error.message.includes('timeout')) {
-      errorMessage += 'Connection timeout. Please check your internet connection and try again.';
-    } else if (error.message.includes('HTTP')) {
-      errorMessage += `Server error: ${error.message}`;
-    } else {
-      errorMessage += error.message;
-    }
+    console.error('❌ Error fetching current user:', error);
     
     return {
       success: false,
-      message: errorMessage,
+      message: 'Failed to fetch current user: ' + error.message,
       error: {
         code: error.code || 'UNKNOWN_ERROR',
         type: 'NETWORK_ERROR'
@@ -129,6 +89,7 @@ resolver.define('getCurrentUser', async (req) => {
     };
   }
 });
+
 resolver.define('getCurrentUserFallback', async (req) => {
   try {
     console.log('🔍 Using fallback method to get current user...');
@@ -836,91 +797,6 @@ resolver.define('checkUserAdminStatus', async (req) => {
     };
   } catch (error) {
     console.error('❌ Error checking admin status:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-resolver.define('addAdminUser', async (req) => {
-  try {
-    const { accountId, addedBy } = req.payload || {};
-    console.log('👑 Adding admin user:', accountId);
-    
-    const admins = await storage.get('pto_admins') || [];
-    
-    if (!admins.includes(accountId)) {
-      admins.push(accountId);
-      await storage.set('pto_admins', admins);
-      
-      // Log the action
-      const adminLog = await storage.get('pto_admin_log') || [];
-      adminLog.push({
-        action: 'ADMIN_ADDED',
-        targetUserId: accountId,
-        performedBy: addedBy,
-        timestamp: new Date().toISOString()
-      });
-      await storage.set('pto_admin_log', adminLog);
-    }
-    
-    return {
-      success: true,
-      message: 'Admin user added successfully'
-    };
-  } catch (error) {
-    console.error('❌ Error adding admin user:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-resolver.define('removeAdminUser', async (req) => {
-  try {
-    const { accountId, removedBy } = req.payload || {};
-    console.log('👑 Removing admin user:', accountId);
-    
-    const admins = await storage.get('pto_admins') || [];
-    const updatedAdmins = admins.filter(id => id !== accountId);
-    
-    await storage.set('pto_admins', updatedAdmins);
-    
-    // Log the action
-    const adminLog = await storage.get('pto_admin_log') || [];
-    adminLog.push({
-      action: 'ADMIN_REMOVED',
-      targetUserId: accountId,
-      performedBy: removedBy,
-      timestamp: new Date().toISOString()
-    });
-    await storage.set('pto_admin_log', adminLog);
-    
-    return {
-      success: true,
-      message: 'Admin user removed successfully'
-    };
-  } catch (error) {
-    console.error('❌ Error removing admin user:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-resolver.define('getAdminUsers', async (req) => {
-  try {
-    console.log('👑 Getting admin users');
-    const adminIds = await storage.get('pto_admins') || [];
-    
-    const adminUsers = adminIds.map(adminId => ({ accountId: adminId }));
-    
-    return {
-      success: true,
-      data: adminUsers
-    };
-  } catch (error) {
-    console.error('❌ Error getting admin users:', error);
     return {
       success: false,
       message: error.message
@@ -1941,86 +1817,291 @@ resolver.define('exportPTODailySchedules', async (req) => {
 });
 // Import PTO Daily Schedules from CSV - CHUNKED VERSION
 resolver.define('importPTODailySchedules', async (req) => {
-  try {
-    const { importData, adminId, skipValidation = false, useStoredValidation = false } = req.payload || {};
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Import timeout after 45 seconds')), 45000); // Increased timeout
+  });
+
+  const importPromise = async () => {
+    const importKey = 'import_in_progress';
     
-    console.log('📥 CHUNKED: Importing PTO daily schedules', 
-      useStoredValidation ? '(using stored validation)' : 
-      skipValidation ? '(pre-validated)' : ''
-    );
-    
-    // Verify admin status
-    const admins = await storage.get('pto_admins') || [];
-    if (!admins.includes(adminId)) {
-      throw new Error('Unauthorized: Admin privileges required');
-    }
-    
-    let dataToImport;
-    
-    // Check if we should use the stored validation data
-    if (useStoredValidation) {
+    try {
+      const { importData, adminId, skipValidation = false, useStoredValidation = false } = req.payload || {};
+      
+      console.log('📥 CHUNKED IMPORT: Starting PTO daily schedules import', 
+        useStoredValidation ? '(using stored validation)' : 
+        skipValidation ? '(pre-validated)' : ''
+      );
+      
+      // Verify admin status
+      const admins = await storage.get('pto_admins') || [];
+      if (!admins.includes(adminId)) {
+        throw new Error('Unauthorized: Admin privileges required');
+      }
+
+      // Check for concurrent imports
+      const existingImport = await storage.get(importKey);
+      if (existingImport) {
+        return {
+          success: false,
+          message: 'Another import is already in progress. Please wait and try again.',
+          data: { importedRecords: 0, failedRecords: 0, errors: [] }
+        };
+      }
+
+      // Mark import as in progress
+      await storage.set(importKey, {
+        startTime: new Date().toISOString(),
+        adminId: adminId,
+        status: 'importing'
+      });
+      
+      let dataToImport;
+      
+      if (useStoredValidation) {
+        try {
+          const validationKey = `pto_import_validation_${adminId}`;
+          const storedValidation = await importService.getChunkedData(validationKey);
+          
+          if (!storedValidation || !storedValidation.validRecords || !storedValidation.preparedForImport) {
+            throw new Error('No prepared validation data found. Please validate the data first.');
+          }
+          
+          console.log(`📦 Using chunked validation with ${storedValidation.validRecords.length} prepared records`);
+          dataToImport = storedValidation.validRecords;
+          
+        } catch (retrievalError) {
+          console.error('❌ Failed to retrieve stored validation:', retrievalError);
+          throw new Error(`Could not retrieve validation data: ${retrievalError.message}`);
+        }
+      } else {
+        // Use direct import data
+        if (!Array.isArray(importData) || importData.length === 0) {
+          throw new Error('Invalid data format: expected array of PTO records');
+        }
+        dataToImport = importData;
+        console.log(`📋 Using direct import data: ${dataToImport.length} records`);
+      }
+
+      // Log the actual data size we're about to process
+      console.log(`🔍 ACTUAL DATA TO IMPORT: ${dataToImport.length} records`);
+      
+      // Increased size limit for chunked processing
+      if (dataToImport.length > 2000) {
+        await storage.delete(importKey);
+        return {
+          success: false,
+          message: `Import size too large: ${dataToImport.length} records. Maximum allowed is 2000 records per import.`,
+          data: { importedRecords: 0, failedRecords: 0, errors: [] }
+        };
+      }
+
+      // START WITH FRESH DATA TO AVOID DUPLICATES
+      console.log('📦 Starting fresh import (clearing existing daily schedules to prevent duplicates)...');
+      
+      // Optional: Backup existing data before clearing
       try {
-        // Get the stored validation data using chunked retrieval
-        const validationKey = `pto_import_validation_${adminId}`;
-        const storedValidation = await importService.getChunkedData(validationKey);
+        const existingSchedules = await importService.getChunkedData('pto_daily_schedules') || [];
+        if (existingSchedules.length > 0) {
+          console.log(`📋 Backing up ${existingSchedules.length} existing schedules before import...`);
+          const backupKey = `pto_daily_schedules_backup_${Date.now()}`;
+          await importService.storeChunkedData(backupKey, existingSchedules);
+          console.log(`✅ Backup stored as: ${backupKey}`);
+        }
+      } catch (backupError) {
+        console.warn('⚠️ Could not backup existing data:', backupError.message);
+        // Continue with import even if backup fails
+      }
+
+      let dailySchedules = []; // Start fresh
+      const importedSchedules = [];
+      const errors = [];
+      
+      // Dynamic batch sizing based on data size
+      let BATCH_SIZE;
+      if (dataToImport.length <= 50) {
+        BATCH_SIZE = 5;  // Small datasets
+      } else if (dataToImport.length <= 200) {
+        BATCH_SIZE = 10; // Medium datasets
+      } else if (dataToImport.length <= 500) {
+        BATCH_SIZE = 15; // Large datasets
+      } else {
+        BATCH_SIZE = 20; // Very large datasets
+      }
+      
+      const totalBatches = Math.ceil(dataToImport.length / BATCH_SIZE);
+      console.log(`📦 Processing ${dataToImport.length} records in ${totalBatches} batches of ${BATCH_SIZE}`);
+      
+      for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+        const startIdx = batchIndex * BATCH_SIZE;
+        const endIdx = Math.min(startIdx + BATCH_SIZE, dataToImport.length);
+        const batch = dataToImport.slice(startIdx, endIdx);
         
-        if (!storedValidation || !storedValidation.validRecords || !storedValidation.preparedForImport) {
-          throw new Error('No prepared validation data found. Please validate the data first.');
+        console.log(`⚡ Processing batch ${batchIndex + 1}/${totalBatches} (records ${startIdx + 1}-${endIdx})`);
+        
+        // Process batch with error handling
+        for (const [recordIndex, record] of batch.entries()) {
+          try {
+            const globalIndex = startIdx + recordIndex;
+            const scheduleId = `schedule-${Date.now()}-${globalIndex}-${Math.random().toString(36).substr(2, 6)}`;
+            
+            // Create schedule record with all required fields
+            const scheduleRecord = {
+              id: scheduleId,
+              pto_request_id: record.pto_request_id || `pto-import-${Date.now()}-${globalIndex}`,
+              date: record.date,
+              schedule_type: record.schedule_type || 'FULL_DAY',
+              leave_type: record.leave_type,
+              hours: record.hours || (record.schedule_type === 'HALF_DAY' ? 4 : 8),
+              // User information
+              requester_id: record.requester_id,
+              requester_name: record.requester_name,
+              requester_email: record.requester_email,
+              // Manager information  
+              manager_id: record.manager_id,
+              manager_name: record.manager_name,
+              manager_email: record.manager_email,
+              // Status and metadata
+              status: record.status || 'approved',
+              reason: record.reason || 'Imported from CSV',
+              // Import tracking
+              imported: true,
+              import_date: new Date().toISOString(),
+              import_batch: batchIndex + 1,
+              import_source: 'csv_bulk_import',
+              created_at: record.created_at || new Date().toISOString()
+            };
+            
+            dailySchedules.push(scheduleRecord);
+            importedSchedules.push(scheduleRecord);
+            
+          } catch (recordError) {
+            console.error(`❌ Error processing record ${startIdx + recordIndex + 1}:`, recordError);
+            errors.push({
+              record: startIdx + recordIndex + 1,
+              error: recordError.message,
+              data: record
+            });
+          }
         }
         
-        console.log(`📦 Using chunked validation with ${storedValidation.validRecords.length} prepared records`);
-        dataToImport = storedValidation.validRecords;
+        // Dynamic save frequency based on dataset size
+        let saveFrequency;
+        if (dataToImport.length <= 100) {
+          saveFrequency = 5;   // Save every 5 batches for small datasets
+        } else if (dataToImport.length <= 500) {
+          saveFrequency = 10;  // Save every 10 batches for medium datasets
+        } else {
+          saveFrequency = 15;  // Save every 15 batches for large datasets
+        }
         
-      } catch (retrievalError) {
-        console.error('❌ Failed to retrieve stored validation:', retrievalError);
-        throw new Error(`Could not retrieve validation data: ${retrievalError.message}`);
+        // Save progress periodically and at the end
+        if ((batchIndex + 1) % saveFrequency === 0 || batchIndex === totalBatches - 1) {
+          try {
+            console.log(`💾 Saving progress: ${dailySchedules.length} total schedules...`);
+            await importService.storeChunkedData('pto_daily_schedules', dailySchedules);
+            console.log(`✅ Saved batch progress ${batchIndex + 1}/${totalBatches}`);
+          } catch (storageError) {
+            console.error(`❌ Storage error at batch ${batchIndex + 1}:`, storageError);
+            // Clean up on storage failure
+            await storage.delete(importKey);
+            throw new Error(`Storage limit exceeded during import. Successfully processed ${importedSchedules.length} records before failure.`);
+          }
+        }
+        
+        // Dynamic delay based on dataset size
+        if (batchIndex < totalBatches - 1) {
+          let delay;
+          if (dataToImport.length <= 100) {
+            delay = 50;   // Fast processing for small datasets
+          } else if (dataToImport.length <= 500) {
+            delay = 75;   // Medium delay for medium datasets
+          } else {
+            delay = 100;  // Longer delay for large datasets
+          }
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+
+        // Progress update every 20 batches for large imports
+        if ((batchIndex + 1) % 20 === 0) {
+          console.log(`🔄 Progress update: ${batchIndex + 1}/${totalBatches} batches completed (${importedSchedules.length} records processed)`);
+        }
       }
-    } else {
-      // Use the provided import data
-      if (!Array.isArray(importData) || importData.length === 0) {
-        throw new Error('Invalid data format: expected array of PTO records');
+      
+      const successCount = importedSchedules.length;
+      const failureCount = errors.length;
+      
+      console.log(`🎉 Import complete: ${successCount} imported, ${failureCount} failed`);
+      
+      // Clean up stored validation after successful import
+      if (useStoredValidation) {
+        try {
+          const validationKey = `pto_import_validation_${adminId}`;
+          await importService.deleteChunkedData(validationKey);
+          console.log('✅ Cleaned up stored validation data');
+        } catch (cleanupError) {
+          console.warn('⚠️ Could not clean up validation data:', cleanupError.message);
+        }
       }
-      dataToImport = importData;
-    }
-    
-    // Use the import service to handle the import with the prepared data
-    const result = await importService.importPTODailySchedules(dataToImport, true);
-    
-    // Clean up stored validation after successful import
-    if (useStoredValidation) {
+      
+      // Log the import activity
+      const adminLog = await storage.get('pto_admin_log') || [];
+      adminLog.push({
+        action: 'PTO_DAILY_SCHEDULES_IMPORT',
+        admin_id: adminId,
+        timestamp: new Date().toISOString(),
+        details: {
+          total: dataToImport.length,
+          imported: successCount,
+          failed: failureCount,
+          useStoredValidation,
+          chunkedStorage: true,
+          timeoutProtected: true,
+          batchSize: BATCH_SIZE,
+          totalBatches: totalBatches
+        }
+      });
+      await storage.set('pto_admin_log', adminLog);
+      
+      return {
+        success: successCount > 0,
+        data: {
+          totalRecords: dataToImport.length,
+          importedRecords: successCount,
+          failedRecords: failureCount,
+          errors: errors.slice(0, 50) // Show more errors for large datasets
+        },
+        message: `Import complete: ${successCount} records imported successfully${failureCount > 0 ? `, ${failureCount} failed` : ''}`
+      };
+      
+    } catch (error) {
+      console.error('❌ Error importing PTO daily schedules:', error);
+      return {
+        success: false,
+        message: error.message || 'Failed to import PTO daily schedules.',
+        error: error.toString()
+      };
+    } finally {
+      // Always clear the import lock
       try {
-        const validationKey = `pto_import_validation_${adminId}`;
-        await importService.deleteChunkedData(validationKey);
-        console.log('✅ Cleaned up stored validation data');
-      } catch (cleanupError) {
-        console.warn('⚠️ Could not clean up validation data:', cleanupError.message);
+        await storage.delete(importKey);
+        console.log('✅ Cleared import lock');
+      } catch (error) {
+        console.warn('⚠️ Could not clear import lock:', error.message);
       }
     }
-    
-    // Log the import activity
-    const adminLog = await storage.get('pto_admin_log') || [];
-    adminLog.push({
-      action: 'PTO_DAILY_SCHEDULES_IMPORT',
-      admin_id: adminId,
-      timestamp: new Date().toISOString(),
-      details: {
-        total: dataToImport.length,
-        imported: result.data?.importedRecords || 0,
-        failed: result.data?.failedRecords || 0,
-        useStoredValidation,
-        chunkedStorage: true
-      }
-    });
-    await storage.set('pto_admin_log', adminLog);
-    
-    return result;
+  };
+
+  try {
+    return await Promise.race([importPromise(), timeoutPromise]);
   } catch (error) {
-    console.error('❌ Error importing PTO daily schedules:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to import PTO daily schedules.',
-      error: error.toString()
-    };
+    if (error.message.includes('timeout')) {
+      return {
+        success: false,
+        message: 'Import timed out after 45 seconds. This usually means the dataset is very large. Try splitting into smaller batches.',
+        data: { importedRecords: 0, failedRecords: 0, errors: [] }
+      };
+    }
+    throw error;
   }
 });
 // Check PTO Import Status - not being used:
@@ -2207,15 +2288,15 @@ resolver.define('validatePTOImportData', async (req) => {
           validationComplete: true,
           validation: {
             totalRecords: importData.length,
-            validRecords: enhancedRecords.slice(0, 10), // Only return first 10 for preview
-            validRecordsCount: enhancedRecords.length, // Full count
+            validRecords: enhancedRecords.slice(0, 5), // Show fewer for preview
+            validRecordsCount: enhancedRecords.length, // This is the key fix
             invalidRecords: finalErrors.length,
-            errors: finalErrors.slice(0, 20), // Limit errors in response
+            errors: finalErrors.slice(0, 10), // Fewer errors for faster display
             chunkedStorage: true,
             chunks: storeResult ? storeResult.chunks : 1
           }
         },
-        message: `Validation complete: ${enhancedRecords.length} records ready for import (stored in ${storeResult ? storeResult.chunks : 1} chunks)`
+        message: `Database validation complete: ${enhancedRecords.length} of ${importData.length} records ready for import`
       };
     }
     
@@ -2512,3 +2593,55 @@ export async function availabilityApiHandler(request) {
     };
   }
 }
+
+// PTO Balances for current user
+resolver.define('getUserPTOBalances', async (req) => {
+  try {
+    const { accountId } = req.payload || {};
+    if (!accountId) {
+      throw new Error('accountId is required');
+    }
+    const currentYear = new Date().getFullYear();
+    const allBalances = await storage.get('pto_balances') || [];
+    const userBalances = allBalances.filter(b => b.user_id === accountId && b.year === currentYear);
+    // Group by leave type
+    const balancesByType = {};
+    userBalances.forEach(b => {
+      balancesByType[b.leave_type] = {
+        allocated_days: b.allocated_days,
+        used_days: b.used_days,
+        remaining_days: b.remaining_days,
+        year: b.year
+      };
+    });
+    return {
+      success: true,
+      data: balancesByType
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
+
+resolver.define('deletePTOBalance', async (req) => {
+  try {
+    const { user_id, leave_type, year } = req.payload || {};
+    await ptoService.deletePTOBalance({ user_id, leave_type, year });
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+resolver.define('importDatabase', async (req) => {
+  try {
+    const { table, data } = req.payload || {};
+    await ptoService.importDatabase({ table, data });
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});

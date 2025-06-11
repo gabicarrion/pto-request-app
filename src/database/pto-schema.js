@@ -44,26 +44,42 @@ export const PTO_SCHEMA = {
   },
 
   // Team assignments for PTO management
-  pto_teams: {
+  teams: {
     id: 'string',
     name: 'string',
-    description: 'text',
-    manager_id: 'string',
+    description: 'string',
     department: 'string',
-    members: 'json', // Array of user objects
+    color: 'string',
+    manager: 'string',
     created_at: 'datetime',
-    updated_at: 'datetime'
+    updated_at: 'datetime',
+    updated_by: 'string'
   },
 
   // PTO balance tracking
   pto_balances: {
-    id: 'string',
     user_id: 'string',
     leave_type: 'string',
     allocated_days: 'number',
     used_days: 'number',
     remaining_days: 'number',
-    year: 'number',
+    year: 'number'
+  },
+
+  // Add user table schema (if not present) and add manager/executive_manager fields
+  users: {
+    id: 'string',
+    jira_account_id: 'string',
+    display_name: 'string',
+    email_address: 'string',
+    employment_type: 'string',
+    hire_date: 'date',
+    team_memberships: 'json',
+    capacity: 'number',
+    availability: 'json',
+    isAdmin: 'boolean',
+    manager: 'string',
+    executive_manager: 'string',
     created_at: 'datetime',
     updated_at: 'datetime'
   }

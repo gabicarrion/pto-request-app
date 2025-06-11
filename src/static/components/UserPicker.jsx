@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Search, User, X } from 'lucide-react';
+import { invoke } from '@forge/bridge';
 
 // Simple debounce utility
 function debounce(func, wait) {
@@ -45,7 +46,6 @@ const UserPicker = ({
       setSearchError(null);
       
       try {
-        const { invoke } = await import('@forge/bridge');
         const response = await invoke('searchDatabaseUsers', { 
           query, 
           filterBy,

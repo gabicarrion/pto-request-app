@@ -16,6 +16,9 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
   const [showFilters, setShowFilters] = useState(false);
   const [editingRequest, setEditingRequest] = useState(null);
   const [infoMessage, setInfoMessage] = useState('');
+  const [showDayEventsModal, setShowDayEventsModal] = useState(false);
+  const [modalDayEvents, setModalDayEvents] = useState([]);
+  const [modalDay, setModalDay] = useState(null);
 
   // Find current user in the users database
   const currentUserData = allUsers?.find(user => 
@@ -56,13 +59,13 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
     if (!events) return [];
 
     return events.filter(event => {
-      // Team filter
+      // Team filter: always get user from allUsers and check their current team_id
       if (filters.team !== 'all') {
         const eventUser = allUsers?.find(user => 
           user.jira_account_id === event.requester_id ||
           user.email_address === event.requester_email
         );
-        if (!eventUser || eventUser.team_id !== filters.team) return false;
+        if (!eventUser || String(eventUser.team_id) !== String(filters.team)) return false;
       }
 
       // User filter - FIXED
@@ -229,13 +232,19 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
             {hasActiveFilters() && <span className="filter-indicator">●</span>}
           </button>
           
-          {selectedDates.length > 0 && (
+          {selectedDates.filter(dateStr => {
+            const date = new Date(dateStr);
+            return date >= new Date(new Date().setHours(0,0,0,0));
+          }).length > 0 && (
             <button
               onClick={() => setShowSubmitModal(true)}
               className="btn btn-primary calendar-submit-btn"
             >
               <Plus size={16} />
-              <span>Request PTO ({selectedDates.length} days)</span>
+              <span>Request PTO ({selectedDates.filter(dateStr => {
+                const date = new Date(dateStr);
+                return date >= new Date(new Date().setHours(0,0,0,0));
+              }).length} days)</span>
             </button>
           )}
         </div>
@@ -383,9 +392,20 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
                       </div>
                     ))}
                     {dayEvents.length > 2 && (
-                      <div className="calendar-event-more">
+                      <button
+                        className="calendar-event-more"
+                        onClick={e => {
+                          e.stopPropagation();
+                          setModalDayEvents(dayEvents);
+                          setModalDay(day);
+                          setShowDayEventsModal(true);
+                        }}
+                        type="button"
+                        tabIndex={0}
+                        aria-label={`Show all events for ${day.toDateString()}`}
+                      >
                         +{dayEvents.length - 2} more
-                      </div>
+                      </button>
                     )}
                   </div>
                 </div>
@@ -418,7 +438,10 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
       {/* Submit PTO Modal */}
       {showSubmitModal && (
         <PTOSubmissionModal
-          selectedDates={selectedDates}
+          selectedDates={selectedDates.filter(dateStr => {
+            const date = new Date(dateStr);
+            return date >= new Date(new Date().setHours(0,0,0,0));
+          })}
           onClose={() => setShowSubmitModal(false)}
           onSubmit={handlePTOSubmit}
           currentUser={currentUser}
@@ -450,6 +473,32 @@ const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, curren
             </div>
             <div style={{ marginBottom: 16 }}>{infoMessage}</div>
             <button className="btn btn-primary" onClick={() => setInfoMessage('')}>OK</button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for all events of a day */}
+      {showDayEventsModal && (
+        <div className="modal-overlay" onClick={() => setShowDayEventsModal(false)}>
+          <div className="modal-content" style={{ maxWidth: 400, margin: 'auto', padding: 24 }} onClick={e => e.stopPropagation()}>
+            <div style={{ marginBottom: 16, fontWeight: 600, fontSize: 18 }}>
+              Events for {modalDay && modalDay.toLocaleDateString()}
+            </div>
+            <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+              {modalDayEvents.map((event, idx) => (
+                <div key={event.id + '-' + idx} className={
+                  'calendar-event' +
+                  (event.status === 'approved' ? ' calendar-event-approved' : '') +
+                  (event.status === 'pending' ? ' calendar-event-pending' : '') +
+                  (event.status === 'declined' ? ' calendar-event-declined' : '')
+                } style={{ marginBottom: 6 }}>
+                  <span>{getLeaveTypeEmoji(event.leave_type)}</span>
+                  <span className="calendar-event-name">{event.requester_name}</span>
+                  <span style={{ marginLeft: 8, fontSize: 12, color: '#888' }}>({event.status})</span>
+                </div>
+              ))}
+            </div>
+            <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowDayEventsModal(false)}>Close</button>
           </div>
         </div>
       )}

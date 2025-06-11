@@ -547,12 +547,14 @@ export const importService = {
   },
   
 /**
- * Import PTO daily schedules from CSV data - CHUNKED STORAGE VERSION
+ * Import PTO daily schedules from CSV data - CHUNKED STORAGE VERSION WITH FRESH START
  * @param {Array<Object>} importData - Array of PTO records to import
  * @param {Boolean} skipValidation - Skip validation (use for pre-validated records)
  * @returns {Promise<Object>} - Result of the import operation
  */
 async importPTODailySchedules(importData, skipValidation = false) {
+  const importKey = 'import_in_progress';
+  
   try {
     console.log(`📥 OPTIMIZED: Importing ${importData.length} PTO daily schedules${skipValidation ? ' (pre-validated)' : ''}`);
     
@@ -565,6 +567,33 @@ async importPTODailySchedules(importData, skipValidation = false) {
       };
     }
 
+    // Check for concurrent imports
+    const existingImport = await storage.get(importKey);
+    if (existingImport) {
+      return {
+        success: false,
+        message: 'Another import is already in progress. Please wait and try again.',
+        data: { importedRecords: 0, failedRecords: 0, errors: [] }
+      };
+    }
+
+    // Mark import as in progress
+    await storage.set(importKey, {
+      startTime: new Date().toISOString(),
+      recordCount: importData.length,
+      status: 'importing'
+    });
+
+    // Size limit check
+    if (importData.length > 50) {
+      await storage.delete(importKey);
+      return {
+        success: false,
+        message: `Import size too large: ${importData.length} records. Please import in batches of 50 or fewer.`,
+        data: { importedRecords: 0, failedRecords: 0, errors: [] }
+      };
+    }
+
     let validRecords = importData;
     
     // Only validate if not already validated
@@ -572,6 +601,7 @@ async importPTODailySchedules(importData, skipValidation = false) {
       console.log('🔍 Quick validation of import data...');
       const validation = await this.validateImportData(importData, false);
       if (!validation.valid) {
+        await storage.delete(importKey);
         return {
           success: false,
           data: validation,
@@ -581,21 +611,29 @@ async importPTODailySchedules(importData, skipValidation = false) {
       validRecords = validation.validRecords;
     }
 
-    // Get existing schedules using chunked retrieval
-    console.log('📦 Loading existing daily schedules...');
-    let dailySchedules;
+    // START WITH FRESH DATA TO AVOID DUPLICATES
+    console.log('📦 Starting fresh import (clearing existing daily schedules to prevent duplicates)...');
+    let dailySchedules = [];
+    
+    // Optional: Backup existing data before clearing
     try {
-      dailySchedules = await this.getChunkedData('pto_daily_schedules') || [];
-    } catch (error) {
-      console.warn('⚠️ Could not load existing schedules, starting fresh:', error.message);
-      dailySchedules = [];
+      const existingSchedules = await this.getChunkedData('pto_daily_schedules') || [];
+      if (existingSchedules.length > 0) {
+        console.log(`📋 Backing up ${existingSchedules.length} existing schedules before import...`);
+        const backupKey = `pto_daily_schedules_backup_${Date.now()}`;
+        await this.storeChunkedData(backupKey, existingSchedules);
+        console.log(`✅ Backup stored as: ${backupKey}`);
+      }
+    } catch (backupError) {
+      console.warn('⚠️ Could not backup existing data:', backupError.message);
+      // Continue with import even if backup fails
     }
     
     const importedSchedules = [];
     const errors = [];
     
-    // Process in SMALLER batches for better memory management
-    const BATCH_SIZE = 5;
+    // Process in SMALL batches for better memory management and timeout prevention
+    const BATCH_SIZE = 2; // Very small batches to prevent timeout
     const totalBatches = Math.ceil(validRecords.length / BATCH_SIZE);
     
     console.log(`📦 Processing ${validRecords.length} records in ${totalBatches} batches of ${BATCH_SIZE}`);
@@ -653,22 +691,23 @@ async importPTODailySchedules(importData, skipValidation = false) {
         }
       }
       
-      // Save after every few batches using chunked storage to prevent overflow
-      if ((batchIndex + 1) % 10 === 0 || batchIndex === totalBatches - 1) {
+      // Save after every 3 batches to prevent timeout and memory issues
+      if ((batchIndex + 1) % 3 === 0 || batchIndex === totalBatches - 1) {
         try {
           console.log(`💾 Saving progress: ${dailySchedules.length} total schedules...`);
           await this.storeChunkedData('pto_daily_schedules', dailySchedules);
           console.log(`✅ Saved batch progress ${batchIndex + 1}/${totalBatches}`);
         } catch (storageError) {
           console.error(`❌ Storage error at batch ${batchIndex + 1}:`, storageError);
-          // If storage fails, we need to stop the process
+          // Clean up on storage failure
+          await storage.delete(importKey);
           throw new Error(`Storage limit exceeded during import. Successfully processed ${importedSchedules.length} records before failure.`);
         }
       }
       
       // Small delay to prevent overwhelming the system
       if (batchIndex < totalBatches - 1) {
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise(resolve => setTimeout(resolve, 100)); // Increased delay
       }
     }
     
@@ -696,8 +735,17 @@ async importPTODailySchedules(importData, skipValidation = false) {
       data: { importedRecords: 0, failedRecords: 0, errors: [{ error: error.message }] },
       error: error.toString()
     };
+  } finally {
+    // Always clear the import lock
+    try {
+      await storage.delete(importKey);
+      console.log('✅ Cleared import lock');
+    } catch (error) {
+      console.warn('⚠️ Could not clear import lock:', error.message);
+    }
   }
 },
+
 /**
  * Get daily schedules with chunked support
  * @returns {Promise<Array>} - Array of daily schedules

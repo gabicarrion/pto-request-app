@@ -28,6 +28,8 @@ const PTOSubmissionModal = ({
   
   const [errors, setErrors] = useState({});
   const [showUserNotInSystemAlert, setShowUserNotInSystemAlert] = useState(false);
+  const [useFullRange, setUseFullRange] = useState(false);
+  const [adminMode, setAdminMode] = useState(false);
 
   // Check if user is in the system on mount
   useEffect(() => {
@@ -41,44 +43,44 @@ const PTOSubmissionModal = ({
   // Auto-find manager for selected user
   const findManagerForUser = (user) => {
     if (!user) return null;
-    
     // Find user in system database
-    const userData = allUsers.find(u => 
+    const userData = allUsers.find(u =>
       u.jira_account_id === user.accountId ||
       u.email_address === user.emailAddress
     );
-    
-    if (!userData?.team_id) return null;
-    
-    // Find user's team
-    const userTeam = allTeams.find(team => team.id === userData.team_id);
-    return userTeam?.manager || null;
+    // 1. Prefer user's manager field
+    if (userData?.manager) {
+      return allUsers.find(u => u.id === userData.manager || u.jira_account_id === userData.manager);
+    }
+    // 2. Fallback to team manager
+    if (userData?.team_id) {
+      const userTeam = allTeams.find(team => team.id === userData.team_id);
+      if (userTeam?.manager) {
+        return allUsers.find(u => u.id === userTeam.manager || u.jira_account_id === userTeam.manager);
+      }
+    }
+    return null;
   };
 
   // Initialize form when component mounts or data changes
   useEffect(() => {
-    // Initialize daily schedules from selected dates or date range
     const initializeSchedules = () => {
       let dates = [];
-      
-      if (selectedDates.length > 0) {
-        dates = selectedDates;
-      } else if (formData.startDate && formData.endDate) {
+      if (!useFullRange && selectedDates.length > 0) {
+        dates = selectedDates.slice().sort();
+      } else if ((useFullRange || selectedDates.length === 0) && formData.startDate && formData.endDate) {
         const start = new Date(formData.startDate);
         const end = new Date(formData.endDate);
         dates = [];
-        
         for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
           dates.push(d.toISOString().split('T')[0]);
         }
       }
-      
       const schedules = dates.map(date => ({
         date,
         type: 'FULL_DAY',
         leaveType: 'vacation'
       }));
-
       setFormData(prev => ({
         ...prev,
         targetUser: isAdmin ? prev.targetUser : currentUser,
@@ -88,9 +90,9 @@ const PTOSubmissionModal = ({
         dailySchedules: schedules
       }));
     };
-
     initializeSchedules();
-  }, [selectedDates, currentUser, userManager, isAdmin, allUsers, allTeams]);
+  // eslint-disable-next-line
+  }, [selectedDates, currentUser, userManager, isAdmin, allUsers, allTeams, useFullRange]);
 
   // Update daily schedules when date range changes
   useEffect(() => {
@@ -228,7 +230,8 @@ const PTOSubmissionModal = ({
       dailySchedules: formData.dailySchedules,
       totalDays,
       totalHours,
-      ...(isAdmin && { targetUser: normalizedUser })
+      isAdmin: adminMode,
+      ...(adminMode && { targetUser: normalizedUser })
     };
 
     onSubmit(submissionData);
@@ -250,10 +253,10 @@ const PTOSubmissionModal = ({
       );
 
       if (userDetails) {
-        setFormData(prev => ({ ...prev, targetUser: userDetails }));
+        setFormData(prev => ({ ...prev, targetUser: userDetails, manager: findManagerForUser(userDetails) }));
       } else {
         // If user not in database, use Jira user data
-        setFormData(prev => ({ ...prev, targetUser: user }));
+        setFormData(prev => ({ ...prev, targetUser: user, manager: null }));
       }
     } catch (error) {
       console.error('Failed to get user details:', error);
@@ -324,6 +327,48 @@ const PTOSubmissionModal = ({
     dateRange: formData.startDate && formData.endDate ? 
       `${new Date(formData.startDate).toLocaleDateString()} - ${new Date(formData.endDate).toLocaleDateString()}` : ''
   };
+
+  // When toggling useFullRange, update dailySchedules immediately
+  const handleToggleFullRange = (toFullRange) => {
+    setUseFullRange(toFullRange);
+    let dates = [];
+    if (toFullRange && formData.startDate && formData.endDate) {
+      const start = new Date(formData.startDate);
+      const end = new Date(formData.endDate);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        dates.push(d.toISOString().split('T')[0]);
+      }
+    } else {
+      dates = selectedDates.slice().sort();
+    }
+    const schedules = dates.map(date => ({
+      date,
+      type: 'FULL_DAY',
+      leaveType: 'vacation'
+    }));
+    setFormData(prev => ({
+      ...prev,
+      dailySchedules: schedules
+    }));
+  };
+
+  // On modal open, always default to selectedDates and useFullRange false
+  useEffect(() => {
+    setUseFullRange(false);
+    const dates = selectedDates.slice().sort();
+    const schedules = dates.map(date => ({
+      date,
+      type: 'FULL_DAY',
+      leaveType: 'vacation'
+    }));
+    setFormData(prev => ({
+      ...prev,
+      startDate: dates[0] || '',
+      endDate: dates[dates.length - 1] || '',
+      dailySchedules: schedules
+    }));
+  // eslint-disable-next-line
+  }, [selectedDates]);
 
   return (
     <div className="modal-overlay">
@@ -438,31 +483,36 @@ const PTOSubmissionModal = ({
           </div>
 
           {/* Date Range Section */}
-          <div className="form-section">
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">Start Date *</label>
-                <input
-                  type="date"
-                  value={formData.startDate}
-                  onChange={e => setFormData(prev => ({ ...prev, startDate: e.target.value }))}
-                  className={`form-control ${errors.startDate ? 'error' : ''}`}
-                  min={new Date().toISOString().split('T')[0]}
-                />
-                {errors.startDate && <div className="error-text">{errors.startDate}</div>}
-              </div>
-              
-              <div className="form-group">
-                <label className="form-label">End Date *</label>
-                <input
-                  type="date"
-                  value={formData.endDate}
-                  onChange={e => setFormData(prev => ({ ...prev, endDate: e.target.value }))}
-                  className={`form-control ${errors.endDate ? 'error' : ''}`}
-                  min={formData.startDate || new Date().toISOString().split('T')[0]}
-                />
-                {errors.endDate && <div className="error-text">{errors.endDate}</div>}
-              </div>
+          <div className="pto-modal-section pto-modal-row">
+            <div className="pto-modal-col">
+              <label className="form-label">Start Date</label>
+              <input type="text" className="form-control" value={formData.startDate} readOnly tabIndex={-1} />
+            </div>
+            <div className="pto-modal-col">
+              <label className="form-label">End Date</label>
+              <input type="text" className="form-control" value={formData.endDate} readOnly tabIndex={-1} />
+            </div>
+            <div className="pto-modal-col" style={{ alignSelf: 'end' }}>
+              {!useFullRange && selectedDates.length > 1 && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  style={{ marginTop: 24 }}
+                  onClick={() => handleToggleFullRange(true)}
+                >
+                  Add all dates in range
+                </button>
+              )}
+              {useFullRange && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  style={{ marginTop: 24 }}
+                  onClick={() => handleToggleFullRange(false)}
+                >
+                  Use only selected dates
+                </button>
+              )}
             </div>
           </div>
 
@@ -665,7 +715,7 @@ const PTOSubmissionModal = ({
           </div>
 
           {/* Admin Mode Notice */}
-          {isAdmin && (
+          {adminMode && (
             <div className="admin-notice">
               <strong>Admin Mode:</strong> This PTO request will be created with admin privileges and may be automatically approved.
             </div>
@@ -675,6 +725,30 @@ const PTOSubmissionModal = ({
           {formData.dailySchedules.length === 0 && (
             <div className="instructions">
               <strong>Next Step:</strong> Select start and end dates to configure your PTO schedule, or return to the calendar to select specific dates.
+            </div>
+          )}
+
+          {/* Admin Mode Toggle */}
+          {isAdmin && (
+            <div className="pto-admin-mode-toggle" style={{ display: 'flex', gap: '2rem', alignItems: 'center', marginBottom: 16 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="radio"
+                  checked={!adminMode}
+                  onChange={() => setAdminMode(false)}
+                  style={{ marginRight: 6 }}
+                />
+                Submit as Standard User
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="radio"
+                  checked={adminMode}
+                  onChange={() => setAdminMode(true)}
+                  style={{ marginRight: 6 }}
+                />
+                Submit as Admin (auto-approve)
+              </label>
             </div>
           )}
         </div>

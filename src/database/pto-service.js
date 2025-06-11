@@ -1,4 +1,4 @@
-import { PTODatabase } from '../database/pto-db';
+import { PTODatabase } from './pto-db';
 import { invoke } from '@forge/bridge';
 
 export class PTOService {
@@ -236,4 +236,60 @@ export class PTOService {
     };
     return defaults[leaveType.toLowerCase()] || 0;
   }
+
+  // Add import/export helpers to PTOService
+  async exportDatabase() {
+    const tables = Object.keys(this.db.tables || PTO_SCHEMA);
+    const exportData = {};
+    for (const table of tables) {
+      exportData[table] = await this.db.findAll(table);
+    }
+    return exportData;
+  }
+
+  async importDatabase({ table, data }) {
+    if (!table || !Array.isArray(data)) throw new Error('Table and data array required');
+    await this.db.overwriteTable(table, data);
+    return true;
+  }
+
+  // PTO Balances helpers
+  async getPTOBalances(userId, year) {
+    const all = await this.db.findAll('pto_balances');
+    return all.filter(b => b.user_id === userId && (!year || b.year === year));
+  }
+
+  async setPTOBalance(balance) {
+    // balance: {user_id, leave_type, allocated_days, used_days, remaining_days, year}
+    const all = await this.db.findAll('pto_balances');
+    const idx = all.findIndex(b => b.user_id === balance.user_id && b.leave_type === balance.leave_type && b.year === balance.year);
+    if (idx !== -1) {
+      all[idx] = {...all[idx], ...balance};
+    } else {
+      all.push(balance);
+    }
+    await this.db.overwriteTable('pto_balances', all);
+    return true;
+  }
+
+  async updatePTOUsedDays(userId, leave_type, year, used_days) {
+    const all = await this.db.findAll('pto_balances');
+    const idx = all.findIndex(b => b.user_id === userId && b.leave_type === leave_type && b.year === year);
+    if (idx !== -1) {
+      all[idx].used_days = used_days;
+      all[idx].remaining_days = all[idx].allocated_days - used_days;
+      await this.db.overwriteTable('pto_balances', all);
+      return true;
+    }
+    return false;
+  }
+
+  async deletePTOBalance({ user_id, leave_type, year }) {
+    const all = await this.db.findAll('pto_balances');
+    const filtered = all.filter(b => !(b.user_id === user_id && b.leave_type === leave_type && b.year === year));
+    await this.db.overwriteTable('pto_balances', filtered);
+    return true;
+  }
 }
+
+export default new PTOService();

@@ -88,4 +88,9 @@ export class PTODatabase {
       });
     });
   }
+
+  async overwriteTable(table, records) {
+    await storage.set(table, records);
+    return true;
+  }
 }
