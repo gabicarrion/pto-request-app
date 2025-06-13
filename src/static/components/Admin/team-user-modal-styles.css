@@ -550,3 +550,106 @@
       white-space: nowrap;
     }
   }
+
+  /* CSV and Jira Import Styles */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.jira-import-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.jira-users-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.jira-user-item {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #e1e5e9;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.jira-user-item:hover {
+  background-color: #f4f5f7;
+  border-color: #c1c7d0;
+}
+
+.jira-user-item.selected {
+  background-color: #deebff;
+  border-color: #0052cc;
+}
+
+.user-avatar {
+  margin-right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: #ddd;
+}
+
+.user-avatar img {
+  border-radius: 50%;
+}
+
+.user-info {
+  flex: 1;
+}
+
+.user-name {
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.user-email {
+  font-size: 12px;
+  color: #6b778c;
+}
+
+.selection-indicator {
+  color: #0052cc;
+  font-weight: bold;
+  margin-left: 8px;
+}
+
+.loading-state, .empty-state {
+  text-align: center;
+  padding: 40px;
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #0052cc;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 16px;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
