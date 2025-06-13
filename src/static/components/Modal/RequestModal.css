@@ -1,0 +1,212 @@
+/* src/static/components/Modal/RequestModal.css */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+  }
+  
+  .modal-container {
+    background-color: white;
+    border-radius: 4px;
+    max-width: 600px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+  
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid #ddd;
+  }
+  
+  .modal-title {
+    font-size: 1.2rem;
+    font-weight: bold;
+    margin: 0;
+  }
+  
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #6c757d;
+  }
+  
+  .modal-body {
+    padding: 1rem;
+  }
+  
+  .modal-footer {
+    padding: 1rem;
+    border-top: 1px solid #ddd;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+  
+  /* Form styles */
+  .form-group {
+    margin-bottom: 1rem;
+  }
+  
+  .form-label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: bold;
+  }
+  
+  .form-control {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 1rem;
+  }
+  
+  .form-control:focus {
+    outline: none;
+    border-color: #0052CC;
+    box-shadow: 0 0 0 2px rgba(0, 82, 204, 0.2);
+  }
+  
+  .form-select {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 1rem;
+    background-color: white;
+  }
+  
+  .form-select-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+  }
+  
+  .form-text {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.875rem;
+    color: #6c757d;
+  }
+  
+  .form-error {
+    color: #dc3545;
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+  }
+  
+  .form-control-static {
+    padding: 0.5rem;
+    background-color: #f8f9fa;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+  }
+  
+  /* Form switch */
+  .form-switch {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+  }
+  
+  .form-switch input {
+    margin-right: 0.5rem;
+  }
+  
+  .form-switch-label {
+    font-weight: normal;
+  }
+  
+  /* Daily schedule styles */
+  .daily-schedule-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+  }
+  
+  .daily-schedule-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem;
+    border-bottom: 1px solid #ddd;
+  }
+  
+  .daily-schedule-item:last-child {
+    border-bottom: none;
+  }
+  
+  .daily-schedule-date {
+    font-weight: bold;
+  }
+  
+  .daily-schedule-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+  
+  /* Modal summary section */
+  .modal-summary {
+    background-color: #f5f5f5;
+    padding: 1rem;
+    margin-top: 1rem;
+    border-radius: 3px;
+  }
+  
+  .summary-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+  
+  .summary-total {
+    font-weight: bold;
+    border-top: 1px solid #ddd;
+    padding-top: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  
+  /* Leave type styles */
+  .leave-type-vacation {
+    background-color: rgba(255, 193, 7, 0.2);
+    border-left: 3px solid #ffc107;
+    padding: 0.25rem 0.5rem;
+  }
+  
+  .leave-type-sick {
+    background-color: rgba(220, 53, 69, 0.2);
+    border-left: 3px solid #dc3545;
+    padding: 0.25rem 0.5rem;
+  }
+  
+  .leave-type-personal {
+    background-color: rgba(13, 110, 253, 0.2);
+    border-left: 3px solid #0d6efd;
+    padding: 0.25rem 0.5rem;
+  }
+  
+  .leave-type-holiday {
+    background-color: rgba(25, 135, 84, 0.2);
+    border-left: 3px solid #198754;
+    padding: 0.25rem 0.5rem;
+  }
+  
+  .leave-type-other {
+    background-color: rgba(108, 117, 125, 0.2);
+    border-left: 3px solid #6c757d;
+    padding: 0.25rem 0.5rem;
+  }

@@ -1,4 +1,5 @@
 import { storage } from '@forge/api';
+import { importService } from '@forge/api';
 
 // Enhanced Team and User Management Service
 export class TeamUserService {
@@ -543,7 +544,7 @@ export class TeamUserService {
 
       const teams = await storage.get(this.TEAMS_KEY) || [];
       const users = await storage.get(this.USERS_KEY) || [];
-      const ptoRequests = await storage.get('pto_requests') || [];
+      const ptoRequests = await importService.getChunkedData('pto_requests') || [];
 
       const team = teams.find(t => t.id === teamId);
       if (!team) {
@@ -618,6 +619,8 @@ export class TeamUserService {
         };
       });
 
+      await importService.storeChunkedData('pto_requests', ptoRequests);
+
       return {
         success: true,
         data: {
@@ -650,7 +653,7 @@ export class TeamUserService {
       }
 
       const users = await storage.get(this.USERS_KEY) || [];
-      const ptoRequests = await storage.get('pto_requests') || [];
+      const ptoRequests = await importService.getChunkedData('pto_requests') || [];
 
       const teamMembers = users.filter(user => (user.team_memberships || []).some(m => m.team_id === teamId));
       const teamMemberIds = teamMembers.map(member => member.jira_account_id || member.id);
@@ -683,6 +686,8 @@ export class TeamUserService {
                            new Date(request.end_date) >= startDate;
         return inTeam && inDateRange;
       });
+
+      await importService.storeChunkedData('pto_requests', ptoRequests);
 
       return {
         success: true,
@@ -780,6 +785,7 @@ export class TeamUserService {
   async migrateFromPTOTeams() {
     try {
       console.log('🔄 Migrating from PTO teams to enhanced teams...');
+      
       
       const ptoTeams = await storage.get('pto_teams') || [];
       const existingTeams = await storage.get(this.TEAMS_KEY) || [];

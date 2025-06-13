@@ -7,23 +7,6 @@ modules:
       title: PTO Request
       description: PTO Request Management System
 
-  function:
-    - key: resolver
-      handler: index.handler
-    - key: api-users
-      handler: index.usersApiHandler
-    - key: api-teams
-      handler: index.teamsApiHandler
-    - key: api-availability
-      handler: index.availabilityApiHandler
-
-  webtrigger:
-    - key: users-endpoint
-      function: api-users
-    - key: teams-endpoint
-      function: api-teams
-    - key: availability-endpoint
-      function: api-availability
 
 resources:
   - key: main

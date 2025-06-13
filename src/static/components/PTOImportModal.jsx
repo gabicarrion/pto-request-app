@@ -1,664 +1,309 @@
-import React from 'react';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import { CheckCircle, AlertTriangle, X } from 'lucide-react';
 
-const PTOImportModal = ({ isOpen, onClose, currentUser, showNotification, onImportSuccess }) => {
+// Helper for progress bar
+function ProgressBar({ value, max }) {
+  return (
+    <div className="progress-bar" style={{ width: '100%', background: '#e0e0e0', borderRadius: 6, margin: '10px 0' }}>
+      <div
+        style={{
+          width: `${(value / max) * 100}%`,
+          background: '#00b38f',
+          height: 16,
+          borderRadius: 6,
+          transition: 'width 0.2s'
+        }}
+      />
+    </div>
+  );
+}
+
+
+const PTOImportModal = ({ isOpen, onClose, showNotification }) => {
+  // Step 1: Upload
+  const [step, setStep] = useState(1);
   const [importFile, setImportFile] = useState(null);
   const [importData, setImportData] = useState([]);
-  const [validationResult, setValidationResult] = useState(null);
+  const [parseError, setParseError] = useState(null);
+
+  // Step 2: Validation
   const [isValidating, setIsValidating] = useState(false);
+  const [validationSummary, setValidationSummary] = useState(null);
+  const [validationOk, setValidationOk] = useState(false);
+
+  // Step 3: Preparation and import
+  const [isPreparing, setIsPreparing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState({ currentBatch: 0, totalBatches: 1 });
   const [importResult, setImportResult] = useState(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
 
-  const handleFileSelect = async (event) => {
+  // Reset state on close
+  useEffect(() => {
+    if (!isOpen) {
+      setStep(1);
+      setImportFile(null);
+      setImportData([]);
+      setParseError(null);
+      setIsValidating(false);
+      setValidationSummary(null);
+      setValidationOk(false);
+      setIsPreparing(false);
+      setIsImporting(false);
+      setImportProgress({ currentBatch: 0, totalBatches: 1 });
+      setImportResult(null);
+      setConfirmReplace(false);
+    }
+  }, [isOpen]);
+
+  // Step 1: File upload/parse
+  const handleFileSelect = (event) => {
     const file = event.target.files[0];
-    console.log('🔍 DEBUG: File selected:', file);
-    
     if (!file) {
-      console.log('🔍 DEBUG: No file selected, resetting state');
-      setImportFile(null);
+      setParseError('No file selected.');
       setImportData([]);
-      setValidationResult(null);
+      setImportFile(null);
       return;
     }
-    
     setImportFile(file);
-    setValidationResult(null);
-    
-    try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const csvData = e.target.result;
-          console.log('🔍 DEBUG: CSV data type:', typeof csvData);
-          console.log('🔍 DEBUG: CSV data length:', csvData ? csvData.length : 'undefined');
-          
-          if (!csvData) {
-            throw new Error('No data read from file');
-          }
-          
-          const rows = csvData.split('\n');
-          console.log('🔍 DEBUG: Rows after split:', rows);
-          console.log('🔍 DEBUG: Rows length:', rows ? rows.length : 'undefined');
-          
-          if (!rows || rows.length === 0) {
-            throw new Error('No rows found in CSV');
-          }
-          
-          const headers = rows[0] ? rows[0].split(',').map(h => h ? h.trim() : '') : [];
-          console.log('🔍 DEBUG: Headers:', headers);
-          console.log('🔍 DEBUG: Headers length:', headers ? headers.length : 'undefined');
-          
-          if (!headers || headers.length === 0) {
-            throw new Error('No headers found in CSV');
-          }
-          
-          let parsedData = [];
-          
-          if (rows.length > 1) {
-            const dataRows = rows.slice(1);
-            console.log('🔍 DEBUG: Data rows:', dataRows);
-            console.log('🔍 DEBUG: Data rows length:', dataRows ? dataRows.length : 'undefined');
-            
-            for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
-              const row = dataRows[rowIndex];
-              console.log(`🔍 DEBUG: Processing row ${rowIndex}:`, row);
-              
-              if (!row || row.trim().length === 0) {
-                console.log(`🔍 DEBUG: Skipping empty row ${rowIndex}`);
-                continue;
-              }
-              
-              try {
-                const values = row.split(',').map(v => v ? v.trim().replace(/^"|"$/g, '') : '');
-                console.log(`🔍 DEBUG: Values for row ${rowIndex}:`, values);
-                
-                const record = {};
-                headers.forEach((header, index) => {
-                  record[header] = index < values.length ? values[index] : '';
-                });
-                
-                console.log(`🔍 DEBUG: Record for row ${rowIndex}:`, record);
-                parsedData.push(record);
-              } catch (rowError) {
-                console.warn(`🔍 DEBUG: Error parsing row ${rowIndex + 2}:`, rowError);
-              }
-            }
-          }
-          
-          console.log('🔍 DEBUG: Final parsed data:', parsedData);
-          console.log('🔍 DEBUG: Final parsed data length:', parsedData ? parsedData.length : 'undefined');
-          
-          if (!parsedData || parsedData.length === 0) {
-            showNotification('No valid data found in CSV file', 'error');
-            setImportData([]);
-            return;
-          }
-          
-          setImportData(parsedData);
-          showNotification(`CSV file loaded with ${parsedData.length} records. Click "Validate Data" to proceed.`);
-        } catch (error) {
-          console.error('🔍 DEBUG: CSV parsing error:', error);
-          showNotification('Failed to parse CSV file: ' + error.message, 'error');
-          setImportData([]);
-        }
-      };
-      
-      reader.onerror = (error) => {
-        console.error('🔍 DEBUG: FileReader error:', error);
-        showNotification('Failed to read file', 'error');
-        setImportFile(null);
+    setParseError(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const csv = e.target.result;
+        const rows = csv.trim().split('\n');
+        if (rows.length < 2) throw new Error('File must have a header and at least one data row.');
+        const headers = rows[0].split(',').map(h => h.trim());
+        const data = rows.slice(1)
+          .filter(line => line.trim())
+          .map(line => {
+            const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+            const obj = {};
+            headers.forEach((h, i) => obj[h] = values[i] ?? '');
+            return obj;
+          });
+        setImportData(data);
+        setStep(2);
+      } catch (err) {
+        setParseError(err.message);
         setImportData([]);
-      };
-      
-      reader.readAsText(file);
-    } catch (error) {
-      console.error('🔍 DEBUG: File reading error:', error);
-      showNotification('Failed to read file: ' + error.message, 'error');
-      setImportFile(null);
-      setImportData([]);
-    }
+      }
+    };
+    reader.onerror = () => setParseError('Could not read file.');
+    reader.readAsText(file);
   };
 
-  const validateBatch = async (batchIndex = 0) => {
-    try {
-      console.log(`🔍 Frontend: Starting validation batch ${batchIndex}`);
-      
-      // For first batch, send the import data
-      const requestPayload = {
-        adminId: currentUser.accountId,
-        checkJiraUsers: true,
-        prepareForImport: true,
-        batchSize: 5,
-        batchIndex: batchIndex
-      };
-  
-      // Only send importData on the first batch
-      if (batchIndex === 0) {
-        if (!importData || !Array.isArray(importData) || importData.length === 0) {
-          showNotification('No valid data to validate', 'error');
-          setIsValidating(false);
-          return;
-        }
-        requestPayload.importData = importData;
-      }
-  
-      console.log(`🔍 Frontend: Sending request for batch ${batchIndex}`);
-      
-      const validationResponse = await invoke('validatePTOImportData', requestPayload);
-      
-      console.log(`🔍 Frontend: Received response for batch ${batchIndex}:`, {
-        success: validationResponse.success,
-        isComplete: validationResponse.data?.isComplete,
-        currentBatch: validationResponse.data?.currentBatch,
-        totalBatches: validationResponse.data?.totalBatches
-      });
-  
-      // Update UI with current progress
-      setValidationResult(validationResponse);
-  
-      // Handle response
-      if (!validationResponse.success) {
-        console.error('❌ Frontend: Validation failed:', validationResponse.message);
-        showNotification(validationResponse.message || 'Validation failed', 'error');
-        setIsValidating(false);
-        return;
-      }
-  
-      // Check if validation is complete
-      if (validationResponse.data?.isComplete || validationResponse.data?.validationComplete) {
-        console.log('✅ Frontend: Validation complete!');
-        const validCount = validationResponse.data.validation?.validRecords?.length || 0;
-        const invalidCount = validationResponse.data.validation?.invalidRecords || 0;
-        
-        showNotification(
-          `Validation complete! ${validCount} records ready for import. ${invalidCount} records have errors.`
-        );
-        setIsValidating(false);
-        return;
-      }
-  
-      // If not complete, continue with next batch
-      if (validationResponse.data?.currentBatch < validationResponse.data?.totalBatches) {
-        const nextBatch = validationResponse.data.currentBatch;
-        console.log(`🔄 Frontend: Moving to next batch ${nextBatch}`);
-        
-        // Small delay before next batch
-        setTimeout(() => {
-          validateBatch(nextBatch);
-        }, 500);
-      } else {
-        console.log('✅ Frontend: All batches processed');
-        setIsValidating(false);
-      }
-  
-    } catch (error) {
-      console.error('❌ Frontend: Validation error:', error);
-      showNotification('Validation error: ' + error.message, 'error');
-      setIsValidating(false);
-    }
-  };
-  
-  const handleValidateData = async () => {
-    if (!importData || !Array.isArray(importData) || importData.length === 0) {
-      showNotification('No data to validate', 'error');
-      return;
-    }
-      // Check import size limit
-    if (importData.length > 50) {
-      showNotification(`Import size too large: ${importData.length} records. Please split into batches of 50 or fewer records.`, 'error');
-      return;
-    }
-    console.log('🔍 Starting database validation process...');
+  // Step 2: Validation (call backend for summary check)
+  const handleValidate = async () => {
     setIsValidating(true);
-    
-    // Set initial state
-    setValidationResult({
-      success: true,
-      data: {
-        isComplete: false,
-        validationInProgress: true
-      },
-      message: "Validating data format and looking up users in database..."
-    });
-    
+    setValidationSummary(null);
+    setValidationOk(false);
     try {
-      // Single validation call using YOUR user database
-      const response = await invoke('validatePTOImportData', {
-        importData: importData,
-        adminId: currentUser.accountId,
-        checkJiraUsers: true, // This now means "check user database"
-        batchIndex: 0,
-        batchSize: 50
-      });
-      
-      setValidationResult(response);
-      setIsValidating(false);
-      
-      if (response.success && response.data?.validationComplete) {
-        const validCount = response.data.validation?.validRecords?.length || 0;
-        const invalidCount = response.data.validation?.invalidRecords || 0;
-        
-        showNotification(
-          `Database validation complete! ${validCount} records ready for import. ${invalidCount > 0 ? `${invalidCount} records have errors.` : ''}`
-        );
-      } else {
-        showNotification(response.message || 'Validation failed', 'error');
-      }
-      
-    } catch (error) {
-      console.error('Validation error:', error);
-      setValidationResult({
-        success: false,
-        message: 'Validation failed: ' + error.message
-      });
-      setIsValidating(false);
-      showNotification('Validation failed: ' + error.message, 'error');
+      const res = await invoke('preValidatePTOImportData', { importData });
+      setValidationSummary(res.summary);
+      setValidationOk(res.summary.missingRequesters.length === 0
+        && res.summary.missingManagers.length === 0
+        && res.summary.invalidLeaveTypes.length === 0
+        && res.summary.invalidHours.length === 0
+        && res.summary.invalidStatuses.length === 0);
+      showNotification('Validation complete. Review the details below.');
+    } catch (err) {
+      setValidationSummary(null);
+      showNotification('Validation failed: ' + (err.message || err.toString()), 'error');
     }
+    setIsValidating(false);
   };
 
-  const handleImportPTOs = async () => {
-    if (!validationResult?.success || !validationResult?.data?.validationComplete) {
-      showNotification('Please complete validation before importing', 'error');
-      return;
-    }
-    
-    setIsImporting(true);
-    setImportResult({
-      success: true,
-      inProgress: true,
-      message: "Starting import process...",
-      data: { importedRecords: 0, totalRecords: validationResult.data.validation?.validRecordsCount || 0 }
-    });
-    
+  // Step 3a: Preparation (enrich and save ready-to-import data in backend)
+  const handlePrepare = async () => {
+    setIsPreparing(true);
+    setImportResult(null);
     try {
-      showNotification('Starting import process...');
-      
-      // FORCE FRESH IMPORT: Clear any old stored validation first
-      console.log('🧹 Clearing any old stored validation data...');
-      await invoke('clearImportValidationData', { adminId: currentUser.accountId });
-      
-      // Use the current validated records directly instead of stored validation
-      const currentValidatedRecords = validationResult.data.validation?.validRecords || [];
-      const recordCount = validationResult.data.validation?.validRecordsCount || currentValidatedRecords.length;
-      
-      console.log(`📥 Importing ${recordCount} records directly (bypassing stored validation)`);
-      
-      // Import using the current validation data, not stored data
-      const response = await invoke('importPTODailySchedules', { 
-        adminId: currentUser.accountId,
-        importData: currentValidatedRecords,  // Use current data
-        skipValidation: true,                 // Skip validation since we already did it
-        useStoredValidation: false           // Don't use stored validation
-      });
-      
-      setImportResult({
-        ...response,
-        inProgress: false
-      });
-      
-      if (response.success) {
-        const successMessage = `Successfully imported ${response.data?.importedRecords || 0} PTO records`;
-        showNotification(successMessage);
-        
-        if (onImportSuccess) {
-          onImportSuccess();
-        }
-        
-        // Auto-close on full success
-        if (response.data?.importedRecords === response.data?.totalRecords) {
-          setTimeout(() => {
-            onClose();
-            resetState();
-          }, 3000);
-        }
+      const res = await invoke('preparePTOImportData', { importData });
+      console.log('preparePTOImportData response:', res); // <-- Add this
+      if (res.success && res.enrichedCount > 0) {
+        setStep(3);
+        showNotification('Data prepared. Ready for import.');
       } else {
-        showNotification(response.message || 'Import failed', 'error');
+        showNotification(res.message || 'Preparation failed.', 'error');
+        // Optionally show res.errors in the modal
       }
-      
-    } catch (error) {
-      console.error('Import error:', error);
-      const errorMessage = 'Import failed: ' + error.message;
-      showNotification(errorMessage, 'error');
-      setImportResult({
-        success: false,
-        inProgress: false,
-        message: errorMessage
-      });
-    } finally {
+    } catch (err) {
+      showNotification('Preparation error: ' + (err.message || err.toString()), 'error');
+    }
+    setIsPreparing(false);
+  };
+  
+  
+  
+
+  // Step 3b: Chunked import with progress
+  const handleImport = async () => {
+    setIsImporting(true);
+    setImportProgress({ currentBatch: 0, totalBatches: 1 });
+    setImportResult(null);
+
+    try {
+      // Start the chunked import; backend will handle batches and progress
+      let finished = false;
+      let batchIdx = 0;
+      let totalBatches = 1;
+      let finalResult = null;
+
+      while (!finished) {
+        const res = await invoke('importPTODailySchedulesChunked', { batchIndex: batchIdx });
+        if (res.progress) {
+          // Update progress in UI
+          setImportProgress({
+            currentBatch: res.progress.currentBatch,
+            totalBatches: res.progress.totalBatches
+          });
+          batchIdx = res.progress.currentBatch;
+          totalBatches = res.progress.totalBatches;
+        }
+        if (res.finished) {
+          finalResult = res.result;
+          finished = true;
+        }
+        // Optionally, add delay here to avoid too-rapid polling
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+
+      setImportResult(finalResult);
+      showNotification(finalResult.message, finalResult.success ? undefined : 'error');
+      setIsImporting(false);
+      setStep(4); // Done!
+    } catch (err) {
+      showNotification('Import failed: ' + (err.message || err.toString()), 'error');
       setIsImporting(false);
     }
   };
 
-  const resetState = async () => {
-    setImportFile(null);
-    setImportData([]);
-    setValidationResult(null);
-    setImportResult(null);
-    setIsValidating(false);
-    setIsImporting(false);
-    
-    // Clear any stored validation data in the backend with proper adminId
-    try {
-      if (currentUser && currentUser.accountId) {
-        const response = await invoke('clearImportValidationData', {
-          adminId: currentUser.accountId // Ensure this is passed as string
-        });
-        console.log('✅ Backend validation data cleared:', response);
-      } else {
-        console.warn('⚠️ No current user available for cleanup');
-        // Try to clear without adminId
-        await invoke('clearImportValidationData', {});
-      }
-    } catch (error) {
-      console.error('❌ Error clearing validation data:', error);
-      // Don't fail the reset process if cleanup fails
-    }
-  };
-
-  // Clear validation state when modal is closed
-  useEffect(() => {
-    if (!isOpen) {
-      resetState();
-    }
-  }, [isOpen]);
-  
   if (!isOpen) return null;
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content">
+      <div className="modal-content" style={{ maxWidth: 560, margin: 'auto' }}>
         <div className="modal-header">
-          <h3 className="modal-title">Import PTO Requests</h3>
-          <button className="modal-close" onClick={async () => {
-            try {
-              // Only cleanup if there was actual validation data
-              if (validationResult && validationResult.success && currentUser?.accountId) {
-                console.log('🧹 Cleaning up validation data from modal close');
-                await invoke('clearImportValidationData', {
-                  adminId: currentUser.accountId
-                });
-              }
-            } catch (error) {
-              console.error('❌ Error clearing data on close:', error);
-            }
-            
-            onClose();
-            await resetState();
-          }}>
-            <X size={20} />
-          </button>
+          <h3>Import PTO Daily Schedules</h3>
+          <button className="modal-close" onClick={onClose}><X size={20} /></button>
         </div>
         <div className="modal-body">
-          <div className="import-pto-content">
-            <p>Import PTO daily schedules from a CSV file. The CSV should have the following columns:</p>
-            <ul className="csv-columns-list">
-              <li><strong>requester_email</strong> - Email address of the employee</li>
-              <li><strong>manager_email</strong> - Email address of the manager</li>
-              <li><strong>leave_type</strong> - Type of leave (vacation, sick, personal, etc.)</li>
-              <li><strong>date</strong> - Date of PTO in YYYY-MM-DD format</li>
-              <li><strong>status</strong> - Status of the PTO (approved, pending, declined, cancelled)</li>
-              <li>schedule_type - Optional: FULL_DAY or HALF_DAY (defaults to FULL_DAY)</li>
-              <li>hours - Optional: Number of hours (defaults to 8 for FULL_DAY, 4 for HALF_DAY)</li>
-              <li>created_at - Optional: Creation timestamp (defaults to current time)</li>
-            </ul>
-            <div className="alert alert-info">
-              <p><strong>Note:</strong> The system will look up user account IDs from your existing user database based on email addresses.</p>
-              <p>Valid leave types: vacation, sick, personal, holiday, other leave type</p>
-              <p><strong>Make sure the email addresses in your CSV match the emails in your user database!</strong></p>
-            </div>
-            
-            {/* Step 1: File Selection */}
-            <div className="import-step">
-              <h4>Step 1: Select CSV File</h4>
-              <div className="form-group">
-                <input
-                  type="file"
-                  accept=".csv"
-                  onChange={handleFileSelect}
-                  className="form-control"
-                  disabled={isValidating || isImporting}
-                />
-                {importFile && (
-                  <div className="file-info">
-                    <p>Selected file: {importFile.name}</p>
-                    <p>Records found: {importData && Array.isArray(importData) ? importData.length : 0}</p>
+          {step === 1 && (
+            <>
+              <h4>Step 1: Upload CSV File</h4>
+              <input type="file" accept=".csv" onChange={handleFileSelect} disabled={isValidating || isPreparing || isImporting} />
+              {parseError && <div style={{ color: 'red', marginTop: 10 }}>{parseError}</div>}
+              {importData.length > 0 &&
+                <div style={{ marginTop: 10 }}>
+                  <div>Records loaded: <b>{importData.length}</b></div>
+                  <button className="btn btn-primary" onClick={handleValidate}>Validate Data</button>
+                </div>
+              }
+            </>
+          )}
+
+          {step === 2 && (
+            <>
+              <h4>Step 2: Validate Data</h4>
+              <button className="btn btn-secondary" onClick={handleValidate} disabled={isValidating || isPreparing}>Run Validation</button>
+              {isValidating && <div style={{ marginTop: 10 }}><span className="spinner" /> Validating...</div>}
+              {validationSummary && (
+                <div style={{ marginTop: 16 }}>
+                  <div><b>Total records:</b> {validationSummary.totalRecords}</div>
+                  <div><b>Unique requesters:</b> {validationSummary.uniqueRequesters} ({validationSummary.missingRequesters.length} missing)</div>
+                  {validationSummary.missingRequesters.length > 0 &&
+                    <div style={{ color: 'red' }}>Missing requesters: {validationSummary.missingRequesters.join(', ')}</div>}
+                  <div><b>Unique managers:</b> {validationSummary.uniqueManagers} ({validationSummary.missingManagers.length} missing)</div>
+                  {validationSummary.missingManagers.length > 0 &&
+                    <div style={{ color: 'red' }}>Missing managers: {validationSummary.missingManagers.join(', ')}</div>}
+                  {validationSummary.invalidLeaveTypes.length > 0 &&
+                    <div style={{ color: 'red' }}>Invalid leave types: {validationSummary.invalidLeaveTypes.map(e => `row ${e.row}: ${e.value}`).join(', ')}</div>}
+                  {validationSummary.invalidHours.length > 0 &&
+                    <div style={{ color: 'red' }}>Invalid hours: {validationSummary.invalidHours.map(e => `row ${e.row}: ${e.value}`).join(', ')}</div>}
+                  {validationSummary.invalidStatuses.length > 0 &&
+                    <div style={{ color: 'red' }}>Invalid statuses: {validationSummary.invalidStatuses.map(e => `row ${e.row}: ${e.value}`).join(', ')}</div>}
+                  {validationSummary.invalidDates.length > 0 &&
+                    <div style={{ color: 'red' }}>Invalid dates: {validationSummary.invalidDates.map(e => `row ${e.row}: ${e.value}`).join(', ')}</div>}
+                  {validationSummary.missingFields.length > 0 &&
+                    <div style={{ color: 'red' }}>Missing fields: {validationSummary.missingFields.map(e => `row ${e.row}: ${e.fields.join(', ')}`).join('; ')}</div>}
+                  {validationSummary.duplicateRecords.length > 0 &&
+                    <div style={{ color: 'orange' }}>Duplicates: {validationSummary.duplicateRecords.map(e => `row ${e.row}`).join(', ')}</div>}
+                </div>
+              )}
+              <div style={{ marginTop: 16 }}>
+                <button
+                  className="btn btn-primary"
+                  disabled={!validationSummary || !validationOk || isPreparing}
+                  onClick={handlePrepare}
+                >Prepare Data for Import</button>
+                <button className="btn" onClick={() => setStep(1)}>Back</button>
+              </div>
+            </>
+          )}
+
+            {importResult?.errors?.length > 0 && (
+              <div className="alert alert-danger">
+                <ul>
+                  {importResult.errors.map((err, idx) => (
+                    <li key={idx}>{`Row ${err.row}: ${err.error} ${err.error2}`}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+          {step === 3 && (
+            <>
+              <h4>Step 3: Confirm and Import</h4>
+              <div className="alert alert-warning" style={{ marginBottom: 16 }}>
+                <strong>Warning:</strong> This import will <b>REPLACE ALL</b> existing PTO daily schedules in the system!
+              </div>
+              <label style={{ display: 'block', margin: '10px 0' }}>
+                <input type="checkbox" checked={confirmReplace} onChange={e => setConfirmReplace(e.target.checked)} />
+                &nbsp;I understand this will delete all current PTO daily schedules and replace with my uploaded data.
+              </label>
+              <button
+                className="btn btn-primary"
+                onClick={handleImport}
+                disabled={!confirmReplace || isImporting}
+              >{isImporting ? 'Importing...' : 'Start Import'}</button>
+              {isImporting &&
+                <div style={{ marginTop: 16 }}>
+                  <ProgressBar value={importProgress.currentBatch} max={importProgress.totalBatches} />
+                  <div>
+                    Importing batch {importProgress.currentBatch} of {importProgress.totalBatches}...
+                  </div>
+                </div>
+              }
+            </>
+          )}
+
+          {step === 4 && importResult && (
+            <>
+              <h4>Import Complete</h4>
+              <div className={importResult.success ? "alert alert-success" : "alert alert-danger"}>
+                {importResult.message}
+              </div>
+              <div>
+                <div><b>Total records:</b> {importResult.data.totalRecords}</div>
+                <div><b>Imported:</b> {importResult.data.importedRecords}</div>
+                <div><b>Failed:</b> {importResult.data.failedRecords}</div>
+                {importResult.data.errors && importResult.data.errors.length > 0 && (
+                  <div>
+                    <b>Errors:</b>
+                    <ul>
+                      {importResult.data.errors.slice(0, 10).map((e, i) => (
+                        <li key={i}>{e.record ? `Row ${e.record}` : ''} {e.error}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </div>
-            </div>
-            
-            {/* Step 2: Validate Data */}
-            <div className="import-step">
-              <h4>Step 2: Validate Data</h4>
-              <button 
-                onClick={handleValidateData}
-                className="btn btn-secondary"
-                disabled={!importData || !Array.isArray(importData) || importData.length === 0 || isValidating || isImporting}
-              >
-                {isValidating ? 'Validating...' : 'Validate Data'}
-              </button>
-              
-              {isValidating && (
-                <div className="validation-progress">
-                  <div className="validation-spinner-container">
-                    <div className="validation-spinner"></div>
-                    <div className="validation-message">
-                      <h5>Validating Import Data</h5>
-                      <p>Checking format and user database...</p>
-                      <div className="validation-stats">
-                        <span>📄 {importData.length} records to process</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {validationResult && !isValidating && (
-                <div className={`validation-result ${validationResult.success ? 'success' : 'error'}`}>
-                  <div className="validation-header">
-                    {validationResult.success ? (
-                      <CheckCircle size={20} className="success-icon" />
-                    ) : (
-                      <AlertTriangle size={20} className="error-icon" />
-                    )}
-                    <span>{validationResult.message}</span>
-                  </div>
-                  
-                  {validationResult.data?.validation && (
-                    <div className="validation-summary">
-                      <div className="summary-grid">
-                        <div className="summary-item">
-                          <span className="summary-label">Total:</span>
-                          <span className="summary-value">{validationResult.data.validation.totalRecords}</span>
-                        </div>
-                        <div className="summary-item">
-                          <span className="summary-label">Ready:</span>
-                          <span className="summary-value success">
-                            {validationResult.data.validation.validRecordsCount || validationResult.data.validation.validRecords?.length || 0}
-                          </span>
-                        </div>
-                        <div className="summary-item">
-                          <span className="summary-label">Errors:</span>
-                          <span className="summary-value error">{validationResult.data.validation.invalidRecords || validationResult.data.validation.errors?.length || 0}</span>
-                        </div>
-                      </div>
-                      
-                      {validationResult.data.validation.errors?.length > 0 && (
-                        <div className="validation-errors">
-                          <h5>Issues Found ({validationResult.data.validation.errors.length}):</h5>
-                          <div className="error-list">
-                            {validationResult.data.validation.errors.slice(0, 5).map((error, index) => (
-                              <div key={index} className="error-item">
-                                <span className="error-record">Row {error.record}:</span>
-                                <span className="error-message">{error.errors.join(', ')}</span>
-                                {error.data?.requester_email && (
-                                  <span className="error-email">({error.data.requester_email})</span>
-                                )}
-                              </div>
-                            ))}
-                            {validationResult.data.validation.errors.length > 5 && (
-                              <div className="error-more">
-                                +{validationResult.data.validation.errors.length - 5} more errors
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            {/* Step 3: Import Data */}
-            <div className="import-step">
-            <div className="import-warning">
-              <div className="alert alert-warning">
-                <strong>Important:</strong> This import will REPLACE all existing daily schedules. 
-                Current database contains {validationResult?.data?.validation?.totalRecords || 0} records.
-              </div>
-              <label className="checkbox-container">
-                <input 
-                  type="checkbox" 
-                  checked={confirmReplace}
-                  onChange={(e) => setConfirmReplace(e.target.checked)}
-                />
-                I understand this will replace existing daily schedule data
-              </label>
-            </div>
-              <h4>Step 3: Import Data</h4>
-              <button 
-                onClick={handleImportPTOs}
-                className="btn btn-primary"
-                disabled={!validationResult?.success || isImporting || !confirmReplace}
-              >
-                {isImporting ? 'IMPORTING...' : 'Import Data'}
-              </button>
-              
-              {/* Import Progress Display */}
-              {isImporting && importResult?.inProgress && (
-                <div className="import-progress">
-                  <div className="progress-bar">
-                    <div 
-                      className="progress-fill" 
-                      style={{ width: `${Math.round(((importResult?.recordsProcessed || 0) / (importResult?.totalRecords || 1)) * 100)}%` }}
-                    ></div>
-                  </div>
-                  <div className="progress-stats">
-                    <span>Processing batch {importResult?.batchNumber || 1} of {importResult?.totalBatches || 1}</span>
-                    <span>{importResult?.recordsProcessed || 0} of {importResult?.totalRecords || 0} records processed</span>
-                    <span>{importResult?.importedRecords || 0} imported, {importResult?.failedRecords || 0} failed</span>
-                  </div>
-                </div>
-              )}
-              
-              {/* Import Results Display */}
-              {importResult && !importResult.inProgress && (
-                <div className={`import-result ${importResult.success ? 'success' : 'error'}`}>
-                  <div className="import-result-header">
-                    {importResult.success ? (
-                      <CheckCircle size={20} className="success-icon" />
-                    ) : (
-                      <AlertTriangle size={20} className="error-icon" />
-                    )}
-                    <span>{importResult.message}</span>
-                  </div>
-                  
-                  {importResult.data && (
-                    <div className="import-result-details">
-                      <div className="import-stats">
-                        <div className="stat-item">
-                          <span className="stat-label">Total Records:</span>
-                          <span className="stat-value">{importResult?.data?.totalRecords || 0}</span>
-                        </div>
-                        <div className="stat-item">
-                          <span className="stat-label">Imported:</span>
-                          <span className="stat-value success">{importResult?.data?.importedRecords || 0}</span>
-                        </div>
-                        <div className="stat-item">
-                          <span className="stat-label">Failed:</span>
-                          <span className="stat-value error">{importResult?.data?.failedRecords || 0}</span>
-                        </div>
-                      </div>
-                      
-                      {importResult.data.errors && importResult.data.errors.length > 0 && (
-                        <div className="import-errors">
-                          <h5>Failed Records:</h5>
-                          <div className="error-table-container">
-                            <table className="error-table">
-                              <thead>
-                                <tr>
-                                  <th>Record #</th>
-                                  <th>Error</th>
-                                  <th>Email</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {importResult.data.errors.slice(0, 10).map((error, index) => (
-                                  <tr key={index} className="error-row">
-                                    <td>{error.record}</td>
-                                    <td className="error-message">
-                                      {error.batch ? `Batch ${error.batch}: ${error.error}` : 
-                                       error.error || (error.errors && error.errors.join(', '))}
-                                    </td>
-                                    <td>
-                                      {error.data && (
-                                        <div className="error-data">
-                                          {error.data.requester_email && <div>Requester: {error.data.requester_email}</div>}
-                                          {error.data.manager_email && <div>Manager: {error.data.manager_email}</div>}
-                                        </div>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                            {importResult.data.errors.length > 10 && (
-                              <div className="more-errors">...and {importResult.data.errors.length - 10} more errors</div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  
-                  {importResult.success && importResult.data?.importedRecords > 0 && (
-                    <div className="import-success-message">
-                      <p>✅ PTO records have been successfully imported.</p>
-                      <p>The modal will close automatically in a few seconds, or you can close it manually.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-              
-              <div className="form-actions">
-                <button 
-                  onClick={() => {
-                    onClose();
-                    resetState();
-                  }}
-                  className="btn btn-secondary"
-                  disabled={isImporting}
-                >
-                  {importResult && importResult.success ? 'Close' : 'Cancel'}
-                </button>
-                <button 
-                  onClick={handleImportPTOs}
-                  className="btn btn-primary"
-                  disabled={!validationResult || !validationResult.success || isImporting || (importResult && importResult.success)}
-                >
-                  {isImporting ? (
-                    <>
-                      <span className="spinner"></span>
-                      Importing...
-                    </>
-                  ) : importResult && importResult.success ? 'Imported Successfully' : 'Import Data'}
-                </button>
-              </div>
-            </div>
-          </div>
+              <button className="btn btn-primary" onClick={onClose}>Close</button>
+            </>
+          )}
         </div>
       </div>
     </div>

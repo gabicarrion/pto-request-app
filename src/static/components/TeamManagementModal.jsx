@@ -1,7 +1,7 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
-import UserPicker from './UserPicker';
+import UserPicker from './Common/UserPicker';
 import { User, UserPlus, Download, RefreshCw, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import Papa from 'papaparse';
 
