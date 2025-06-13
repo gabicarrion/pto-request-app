@@ -143,7 +143,7 @@ resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
     console.log('🔧 Initializing PTO Database with Team Management...');
     
     // Initialize empty arrays for each table if they don't exist
-    const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances', 'pto_admins', 'teams', 'users'];
+    const tables = ['teams', 'users', 'pto_requests', 'pto_daily_schedules'];
     
     for (const table of tables) {
       const existing = await storage.get(table);
@@ -172,7 +172,182 @@ resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
     };
   }
 });
-
+// Replace the migrateDatabaseStructure resolver with this safer version:
+resolver.define('migrateDatabaseStructure', async (req) => {
+  try {
+    console.log('🔄 Starting safe database migration...');
+    
+    // Step 1: Check if we need to cleanup first
+    const ptoRequests = await storage.get('pto_requests') || [];
+    const ptoSchedules = await storage.get('pto_daily_schedules') || [];
+    
+    const totalRecords = ptoRequests.length + ptoSchedules.length;
+    console.log(`📊 Found ${totalRecords} total PTO records`);
+    
+    if (totalRecords > 1000) {
+      return {
+        success: false,
+        message: `Too much PTO data (${totalRecords} records). Please cleanup PTO database first, then retry migration.`
+      };
+    }
+    
+    // Step 2: Migrate only Teams and Users (smaller datasets)
+    const existingUsers = await storage.get('users') || [];
+    const existingTeams = await storage.get('teams') || [];
+    
+    console.log(`📊 Migrating: ${existingUsers.length} users, ${existingTeams.length} teams`);
+    
+    // Step 3: Migrate Teams structure (keep it simple)
+    const migratedTeams = existingTeams.map(team => ({
+      team_id: team.id || team.team_id || `team_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      team_name: team.name || team.team_name || 'Unnamed Team',
+      team_department: team.department || team.team_department || '',
+      team_business_unit: team.business_unit || team.team_business_unit || '',
+      team_manager_name: typeof team.manager === 'object' ? (team.manager.display_name || '') : (team.team_manager_name || ''),
+      team_manager_id: typeof team.manager === 'object' ? (team.manager.jira_account_id || '') : (team.team_manager_id || ''),
+      team_manager_email: typeof team.manager === 'object' ? (team.manager.email_address || '') : (team.team_manager_email || ''),
+      team_executive_manager_name: team.team_executive_manager_name || '',
+      team_executive_manager_id: team.team_executive_manager_id || '',
+      team_executive_manager_email: team.team_executive_manager_email || '',
+      created_at: team.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }));
+    
+    // Step 4: Migrate Users structure (keep it simple)
+    const migratedUsers = existingUsers.map(user => ({
+      user_id: user.id || user.user_id || user.jira_account_id || `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      jira_account_id: user.jira_account_id || '',
+      display_name: user.display_name || 'Unknown User',
+      email_address: user.email_address || '',
+      team_memberships: user.team_memberships || [],
+      employment_type: user.employment_type || 'full_time',
+      capacity: user.capacity || 40,
+      standard_availability: user.availability || user.standard_availability || {},
+      isAdmin: user.isAdmin || false,
+      isManager: user.isManager || [],
+      isExecutive_Manager: user.isExecutive_Manager || [],
+      pto_accountability_type: user.pto_accountability_type || 'standard_year',
+      pto_available_in_the_period: user.pto_available_in_the_period || { vacation: 20, holiday: 10, personal: 1 },
+      hiring_date: user.hire_date || user.hiring_date || new Date().toISOString(),
+      used_pto_days_in_period: user.used_pto_days_in_period || { vacation: 0, holiday: 0, personal: 0 },
+      remaining_pto_days_in_period: user.remaining_pto_days_in_period || { vacation: 20, holiday: 10, personal: 1 },
+      created_at: user.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }));
+    
+    // Step 5: Save migrated data (one table at a time)
+    await storage.set('teams', migratedTeams);
+    console.log('✅ Teams migrated successfully');
+    
+    await storage.set('users', migratedUsers);
+    console.log('✅ Users migrated successfully');
+    
+    return {
+      success: true,
+      message: 'Database structure migrated successfully (Teams & Users only)',
+      data: {
+        migratedTeams: migratedTeams.length,
+        migratedUsers: migratedUsers.length,
+        note: 'PTO data will be restructured automatically as new requests are created'
+      }
+    };
+    
+  } catch (error) {
+    console.error('❌ Database migration failed:', error);
+    return {
+      success: false,
+      message: `Migration failed: ${error.message}`
+    };
+  }
+});
+// Add this new resolver to check storage sizes
+resolver.define('checkStorageSizes', async (req) => {
+  try {
+    const tables = ['teams', 'users', 'pto_requests', 'pto_daily_schedules', 'pto_balances', 'pto_teams', 'pto_admins'];
+    const sizes = {};
+    
+    for (const table of tables) {
+      const data = await storage.get(table);
+      if (data) {
+        const jsonString = JSON.stringify(data);
+        sizes[table] = {
+          records: Array.isArray(data) ? data.length : 1,
+          size: jsonString.length,
+          sizeKB: Math.round(jsonString.length / 1024)
+        };
+      } else {
+        sizes[table] = { records: 0, size: 0, sizeKB: 0 };
+      }
+    }
+    
+    const total = Object.values(sizes).reduce((sum, item) => sum + item.size, 0);
+    
+    return {
+      success: true,
+      data: {
+        tables: sizes,
+        totalSize: total,
+        totalSizeKB: Math.round(total / 1024),
+        maxAllowed: 245760,
+        maxAllowedKB: 240
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
+// Replace the existing cleanupPTODatabase resolver with this:
+resolver.define('cleanupPTODatabase', async (req) => {
+  try {
+    const { adminId, confirmDelete } = req.payload || {};
+    
+    if (!confirmDelete) {
+      return {
+        success: false,
+        message: 'Confirmation required for cleanup'
+      };
+    }
+    
+    console.log('🗑️ Starting PTO database cleanup...');
+    
+    // Clear PTO data in smaller chunks to avoid storage issues
+    const tablesToClean = ['pto_requests', 'pto_daily_schedules'];
+    let deletedCount = 0;
+    
+    for (const table of tablesToClean) {
+      try {
+        const data = await storage.get(table);
+        if (data && Array.isArray(data)) {
+          deletedCount += data.length;
+        }
+        // Set to empty array instead of deleting the key
+        await storage.set(table, []);
+        console.log(`✅ Cleaned table: ${table}`);
+      } catch (error) {
+        console.error(`❌ Error cleaning ${table}:`, error);
+        // Continue with other tables even if one fails
+      }
+    }
+    
+    console.log(`✅ Cleanup completed. Removed ${deletedCount} records.`);
+    
+    return {
+      success: true,
+      data: { deletedCount },
+      message: `Successfully cleaned up ${deletedCount} PTO records`
+    };
+    
+  } catch (error) {
+    console.error('❌ Error during PTO cleanup:', error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
 
 // Teams Management
 resolver.define('getTeams', async (req) => {

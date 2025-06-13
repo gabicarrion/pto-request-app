@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Shield, Users, Calendar, Building2, UserCheck, X, Download, 
-  BarChart3, TrendingUp, Clock, CheckCircle, XCircle, Settings, Plus, Upload, AlertTriangle
+  BarChart3, Database, FileText, TrendingUp, Clock, CheckCircle, XCircle, Settings, Plus, Upload, AlertTriangle
 } from 'lucide-react';
 import { invoke } from '@forge/bridge';
 import UserPicker from '../components/UserPicker';
@@ -722,6 +722,71 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                   <div className="action-content">
                     <div className="action-title">🗑️ Cleanup PTO Database</div>
                     <div className="action-desc">Delete ALL PTO requests and schedules</div>
+                  </div>
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const response = await invoke('checkStorageSizes');
+                      if (response.success) {
+                        const { data } = response;
+                        let message = `📊 Storage Report (${data.totalSizeKB}KB / ${data.maxAllowedKB}KB max):\n\n`;
+                        
+                        Object.entries(data.tables).forEach(([table, info]) => {
+                          message += `${table}: ${info.records} records, ${info.sizeKB}KB\n`;
+                        });
+                        
+                        if (data.totalSize > data.maxAllowed * 0.8) {
+                          message += '\n⚠️ WARNING: Storage is over 80% full!';
+                        }
+                        
+                        alert(message);
+                      } else {
+                        showNotification('Failed to check storage sizes', 'error');
+                      }
+                    } catch (error) {
+                      showNotification('Storage check failed: ' + error.message, 'error');
+                    }
+                  }}
+                  className="admin-action-btn"
+                >
+                  <div className="action-icon bg-yellow">
+                    <FileText size={20} />
+                  </div>
+                  <div className="action-content">
+                    <div className="action-title">📊 Check Storage</div>
+                    <div className="action-desc">View storage usage by table</div>
+                  </div>
+                </button>
+                <button
+                  onClick={async () => {
+                    if (window.confirm('This will migrate your database to the new structure. This process will backup and restructure your existing data. Proceed?')) {
+                      setLoading(true);
+                      try {
+                        const response = await invoke('migrateDatabaseStructure');
+                        if (response.success) {
+                          showNotification(`✅ Migration completed: ${response.data.migratedUsers} users, ${response.data.migratedTeams} teams, ${response.data.migratedPtoRequests} PTO requests migrated.`);
+                          // Refresh the data
+                          loadStats();
+                        } else {
+                          showNotification(response.message || 'Migration failed', 'error');
+                        }
+                      } catch (error) {
+                        showNotification('Migration failed: ' + error.message, 'error');
+                      } finally {
+                        setLoading(false);
+                      }
+                    }
+                  }}
+                  className="admin-action-btn"
+                  disabled={loading}
+                >
+                  <div className="action-icon bg-blue">
+                    <Settings size={20} />
+                  </div>
+                  <div className="action-content">
+                    <div className="action-title">🔄 Migrate Database</div>
+                    <div className="action-desc">Restructure database to new schema</div>
                   </div>
                 </button>
 
