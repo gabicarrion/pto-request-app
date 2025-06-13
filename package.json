@@ -6,8 +6,6 @@
   "scripts": {
     "start": "webpack serve --mode development --port 8000",
     "build": "webpack --mode production",
-    "build:dev": "webpack --mode development",
-    "clean": "rm -rf static/*.js static/*.css static/*.map node_modules/.cache",
     "lint": "eslint src --ext .js,.jsx --fix",
     "forge:tunnel": "forge tunnel --port 8000"
   },

@@ -1,13 +1,8 @@
 import Resolver from '@forge/resolver';
 import { storage } from '@forge/api';
-import api, { route, asUser } from '@forge/api';
-import teamUserService from './services/team-user-service';
-import resourceApiService from './services/resource-api-service';
-import { importService } from './services/import-service';
-import ptoService from './database/pto-service';
+import api, { route } from '@forge/api';
 
 const resolver = new Resolver();
-const cleanupCache = new Map();
 
 // Helper function for default availability
 function getDefaultAvailability() {
@@ -22,7 +17,6 @@ function getDefaultAvailability() {
   ];
 }
 
-
 // Initialize PTO Database
 resolver.define('initializePTODatabase', async (req) => {
   try {
@@ -32,15 +26,10 @@ resolver.define('initializePTODatabase', async (req) => {
     const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances'];
     
     for (const table of tables) {
-      try {
-        const existing = await storage.get(table);
-        if (!existing) {
-          await storage.set(table, []);
-          console.log(`✅ Initialized table: ${table}`);
-        }
-      } catch (storageError) {
-        console.error(`❌ Error initializing table ${table}:`, storageError);
-        // Continue with other tables even if one fails
+      const existing = await storage.get(table);
+      if (!existing) {
+        await storage.set(table, []);
+        console.log(`✅ Initialized table: ${table}`);
       }
     }
     
@@ -57,24 +46,81 @@ resolver.define('initializePTODatabase', async (req) => {
   }
 });
 
-// Get Current User
-resolver.define('getCurrentUser', async (req) => {
+// Initialize PTO Database with Team Management (simplified)
+resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
   try {
-    const response = await api.asUser().requestJira(route`/rest/api/3/myself`);
+    console.log('🔧 Initializing PTO Database with Team Management...');
     
-    if (response.status !== 200) {
-      console.error('Error fetching current user:', response.status);
-      throw new Error(`Failed to fetch user: ${response.status}`);
+    // Initialize empty arrays for each table if they don't exist
+    const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances', 'pto_admins', 'teams', 'users'];
+    
+    for (const table of tables) {
+      const existing = await storage.get(table);
+      if (!existing) {
+        await storage.set(table, []);
+        console.log(`✅ Initialized table: ${table}`);
+      }
     }
     
-    const userData = await response.json();
-    return userData;
+    return {
+      success: true,
+      data: {
+        pto: { success: true, message: 'PTO tables initialized' },
+        teamUser: { success: true, message: 'Team/User tables initialized' },
+        admin: { success: true, message: 'Admin setup ready' },
+        initialized: true,
+        timestamp: new Date().toISOString()
+      },
+      message: 'PTO Database with Team Management initialized successfully'
+    };
   } catch (error) {
-    console.error('Error in getCurrentUser:', error);
-    throw error;
+    console.error('❌ Database initialization failed:', error);
+    return {
+      success: false,
+      message: error.message
+    };
   }
 });
 
+// Get Current User
+resolver.define('getCurrentUser', async (req) => {
+  try {
+    console.log('🔍 Fetching current user...');
+    
+    const response = await api.asUser().requestJira(route`/rest/api/3/myself`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const userData = await response.json();
+    
+    console.log('✅ Successfully fetched user data');
+    return {
+      success: true,
+      data: {
+        accountId: userData.accountId,
+        displayName: userData.displayName,
+        emailAddress: userData.emailAddress,
+        avatarUrl: userData.avatarUrls?.['48x48'] || userData.avatarUrls?.['32x32'] || null
+      }
+    };
+    
+  } catch (error) {
+    console.error('❌ Error fetching current user:', error);
+    
+    return {
+      success: false,
+      message: 'Failed to fetch current user: ' + error.message,
+      error: {
+        code: error.code || 'UNKNOWN_ERROR',
+        type: 'NETWORK_ERROR'
+      }
+    };
+  }
+});
+
+// Get Current User Fallback
 resolver.define('getCurrentUserFallback', async (req) => {
   try {
     console.log('🔍 Using fallback method to get current user...');
@@ -112,11 +158,881 @@ resolver.define('getCurrentUserFallback', async (req) => {
     };
   }
 });
+
+// Check User Admin Status
+resolver.define('checkUserAdminStatus', async (req) => {
+  try {
+    const { accountId } = req.payload || {};
+    console.log('👑 Checking admin status for:', accountId);
+    
+    const admins = await storage.get('pto_admins') || [];
+    const isAdmin = admins.includes(accountId);
+    
+    return {
+      success: true,
+      data: { isAdmin }
+    };
+  } catch (error) {
+    console.error('❌ Error checking admin status:', error);
+    return {
+      success: false,
+      data: { isAdmin: false },
+      message: error.message
+    };
+  }
+});
+
+// Add Admin User
+resolver.define('addAdminUser', async (req) => {
+  try {
+    const { accountId, addedBy } = req.payload || {};
+    console.log('👑 Adding admin user:', accountId);
+    
+    const admins = await storage.get('pto_admins') || [];
+    
+    if (!admins.includes(accountId)) {
+      admins.push(accountId);
+      await storage.set('pto_admins', admins);
+      
+      // Log the action
+      const adminLog = await storage.get('pto_admin_log') || [];
+      adminLog.push({
+        action: 'ADMIN_ADDED',
+        targetUserId: accountId,
+        performedBy: addedBy,
+        timestamp: new Date().toISOString()
+      });
+      await storage.set('pto_admin_log', adminLog);
+    }
+    
+    return {
+      success: true,
+      message: 'Admin user added successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error adding admin user:', error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
+
+// Remove Admin User
+resolver.define('removeAdminUser', async (req) => {
+  try {
+    const { accountId, removedBy } = req.payload || {};
+    console.log('👑 Removing admin user:', accountId);
+    
+    const admins = await storage.get('pto_admins') || [];
+    const updatedAdmins = admins.filter(id => id !== accountId);
+    
+    await storage.set('pto_admins', updatedAdmins);
+    
+    // Log the action
+    const adminLog = await storage.get('pto_admin_log') || [];
+    adminLog.push({
+      action: 'ADMIN_REMOVED',
+      targetUserId: accountId,
+      performedBy: removedBy,
+      timestamp: new Date().toISOString()
+    });
+    await storage.set('pto_admin_log', adminLog);
+    
+    return {
+      success: true,
+      message: 'Admin user removed successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error removing admin user:', error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
+
+// Get Admin Users
+resolver.define('getAdminUsers', async (req) => {
+  try {
+    console.log('👑 Getting admin users');
+    const adminIds = await storage.get('pto_admins') || [];
+    
+    const adminUsers = adminIds.map(adminId => ({ accountId: adminId }));
+    
+    return {
+      success: true,
+      data: adminUsers
+    };
+  } catch (error) {
+    console.error('❌ Error getting admin users:', error);
+    return {
+      success: false,
+      message: error.message
+    };
+  }
+});
+// Basic API handlers for webtriggers
+export const usersApiHandler = async (req) => {
+  try {
+    console.log('🔍 Users API handler called');
+    
+    // Simple response for now
+    return {
+      body: JSON.stringify({
+        success: true,
+        message: 'Users API endpoint',
+        data: []
+      }),
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      statusCode: 200
+    };
+  } catch (error) {
+    console.error('❌ Error in users API handler:', error);
+    return {
+      body: JSON.stringify({
+        success: false,
+        message: error.message
+      }),
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      statusCode: 500
+    };
+  }
+};
+
+export const teamsApiHandler = async (req) => {
+  try {
+    console.log('🔍 Teams API handler called');
+    
+    return {
+      body: JSON.stringify({
+        success: true,
+        message: 'Teams API endpoint',
+        data: []
+      }),
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      statusCode: 200
+    };
+  } catch (error) {
+    console.error('❌ Error in teams API handler:', error);
+    return {
+      body: JSON.stringify({
+        success: false,
+        message: error.message
+      }),
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      statusCode: 500
+    };
+  }
+};
+
+export const availabilityApiHandler = async (req) => {
+  try {
+    console.log('🔍 Availability API handler called');
+    
+    return {
+      body: JSON.stringify({
+        success: true,
+        message: 'Availability API endpoint',
+        data: []
+      }),
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      statusCode: 200
+    };
+  } catch (error) {
+    console.error('❌ Error in availability API handler:', error);
+    return {
+      body: JSON.stringify({
+        success: false,
+        message: error.message
+      }),
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      statusCode: 500
+    };
+  }
+};
+
+// Teams Management
+resolver.define('getTeams', async (req) => {
+  try {
+    const teams = await storage.get('teams') || [];
+    return {
+      success: true,
+      data: teams
+    };
+  } catch (error) {
+    console.error('❌ Error getting teams:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get teams'
+    };
+  }
+});
+
+resolver.define('createTeam', async (req) => {
+  try {
+    const teamData = req.payload || {};
+    const teams = await storage.get('teams') || [];
+    
+    const newTeam = {
+      id: `team-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      name: teamData.name || '',
+      description: teamData.description || '',
+      department: teamData.department || '',
+      color: teamData.color || '#667eea',
+      manager: teamData.manager || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    teams.push(newTeam);
+    await storage.set('teams', teams);
+
+    return {
+      success: true,
+      data: newTeam,
+      message: 'Team created successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error creating team:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to create team'
+    };
+  }
+});
+
+// Users Management
+resolver.define('getUsers', async (req) => {
+  try {
+    const users = await storage.get('users') || [];
+    return {
+      success: true,
+      data: users
+    };
+  } catch (error) {
+    console.error('❌ Error getting users:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get users'
+    };
+  }
+});
+
+resolver.define('createUser', async (req) => {
+  try {
+    const userData = req.payload || {};
+    const users = await storage.get('users') || [];
+    
+    const newUser = {
+      id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      first_name: userData.firstName || '',
+      last_name: userData.lastName || '',
+      display_name: userData.displayName || '',
+      email_address: userData.emailAddress || '',
+      jira_account_id: userData.jiraAccountId || '',
+      employment_type: userData.employmentType || 'full-time',
+      hire_date: userData.hireDate || '',
+      team_id: userData.teamId || null,
+      capacity: userData.capacity || 40,
+      availability: userData.availability || getDefaultAvailability(),
+      status: 'active',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    users.push(newUser);
+    await storage.set('users', users);
+
+    return {
+      success: true,
+      data: newUser,
+      message: 'User created successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error creating user:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to create user'
+    };
+  }
+});
+
+// PTO Requests Management
+resolver.define('submitPTORequest', async (req) => {
+  try {
+    const requestData = req.payload || {};
+    const ptoRequests = await storage.get('pto_requests') || [];
+    
+    const newRequest = {
+      id: `pto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      requester_id: requestData.requester_id,
+      requester_name: requestData.requester_name,
+      requester_email: requestData.requester_email,
+      manager_id: requestData.manager_id,
+      manager_name: requestData.manager_name,
+      manager_email: requestData.manager_email,
+      start_date: requestData.start_date,
+      end_date: requestData.end_date,
+      total_days: requestData.total_days || 0,
+      total_hours: requestData.total_hours || 0,
+      reason: requestData.reason || '',
+      status: 'pending',
+      submitted_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    ptoRequests.push(newRequest);
+    await storage.set('pto_requests', ptoRequests);
+
+    // Handle daily schedules if provided
+    if (requestData.daily_schedules && requestData.daily_schedules.length > 0) {
+      const dailySchedules = await storage.get('pto_daily_schedules') || [];
+      
+      const scheduleRecords = requestData.daily_schedules.map(schedule => ({
+        id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        request_id: newRequest.id,
+        date: schedule.date,
+        type: schedule.type,
+        leave_type: schedule.leaveType || 'vacation',
+        hours: schedule.hours || (schedule.type === 'FULL_DAY' ? 8 : 4),
+        requester_id: requestData.requester_id,
+        created_at: new Date().toISOString()
+      }));
+      
+      dailySchedules.push(...scheduleRecords);
+      await storage.set('pto_daily_schedules', dailySchedules);
+    }
+
+    return {
+      success: true,
+      data: newRequest,
+      message: 'PTO request submitted successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error submitting PTO request:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to submit PTO request'
+    };
+  }
+});
+
+resolver.define('getPTORequests', async (req) => {
+  try {
+    const { requester_id, status } = req.payload || {};
+    let requests = await storage.get('pto_requests') || [];
+    
+    // Filter by requester if provided
+    if (requester_id) {
+      requests = requests.filter(request => request.requester_id === requester_id);
+    }
+    
+    // Filter by status if provided
+    if (status && status !== 'all') {
+      requests = requests.filter(request => request.status === status);
+    }
+    
+    // Sort by creation date (newest first)
+    requests.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    return {
+      success: true,
+      data: requests
+    };
+  } catch (error) {
+    console.error('❌ Error getting PTO requests:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get PTO requests'
+    };
+  }
+});
+
+resolver.define('updatePTORequestStatus', async (req) => {
+  try {
+    const { requestId, status, reviewedBy, comments } = req.payload || {};
+    const requests = await storage.get('pto_requests') || [];
+    
+    const requestIndex = requests.findIndex(r => r.id === requestId);
+    if (requestIndex === -1) {
+      throw new Error('PTO request not found');
+    }
+    
+    requests[requestIndex].status = status;
+    requests[requestIndex].reviewed_by = reviewedBy;
+    requests[requestIndex].reviewed_at = new Date().toISOString();
+    requests[requestIndex].comments = comments || '';
+    requests[requestIndex].updated_at = new Date().toISOString();
+    
+    await storage.set('pto_requests', requests);
+    
+    return {
+      success: true,
+      data: requests[requestIndex],
+      message: 'PTO request status updated successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error updating PTO request status:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to update PTO request status'
+    };
+  }
+});
+// User Teams Management
+resolver.define('getUserTeams', async (req) => {
+  try {
+    const { userId } = req.payload || {};
+    const teams = await storage.get('teams') || [];
+    const users = await storage.get('users') || [];
+    
+    // Find user
+    const user = users.find(u => u.id === userId || u.jira_account_id === userId);
+    if (!user) {
+      return {
+        success: true,
+        data: []
+      };
+    }
+    
+    // Get user's teams (if user has team_memberships array)
+    let userTeams = [];
+    if (user.team_memberships && Array.isArray(user.team_memberships)) {
+      userTeams = teams.filter(team => 
+        user.team_memberships.some(membership => membership.team_id === team.id)
+      );
+    } else if (user.team_id) {
+      // Legacy: if user has a single team_id
+      const team = teams.find(t => t.id === user.team_id);
+      if (team) userTeams = [team];
+    }
+    
+    return {
+      success: true,
+      data: userTeams
+    };
+  } catch (error) {
+    console.error('❌ Error getting user teams:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get user teams',
+      data: []
+    };
+  }
+});
+
+// Update Team
+resolver.define('updateTeam', async (req) => {
+  try {
+    const teamData = req.payload || {};
+    const teams = await storage.get('teams') || [];
+    
+    const teamIndex = teams.findIndex(t => t.id === teamData.id);
+    if (teamIndex === -1) {
+      throw new Error('Team not found');
+    }
+    
+    teams[teamIndex] = {
+      ...teams[teamIndex],
+      ...teamData,
+      updated_at: new Date().toISOString()
+    };
+    
+    await storage.set('teams', teams);
+    
+    return {
+      success: true,
+      data: teams[teamIndex],
+      message: 'Team updated successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error updating team:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to update team'
+    };
+  }
+});
+
+// Delete Team
+resolver.define('deleteTeam', async (req) => {
+  try {
+    const { teamId } = req.payload || {};
+    const teams = await storage.get('teams') || [];
+    
+    const filteredTeams = teams.filter(t => t.id !== teamId);
+    await storage.set('teams', filteredTeams);
+    
+    return {
+      success: true,
+      message: 'Team deleted successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error deleting team:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to delete team'
+    };
+  }
+});
+
+// Update User
+resolver.define('updateUser', async (req) => {
+  try {
+    const userData = req.payload || {};
+    const users = await storage.get('users') || [];
+    
+    const userIndex = users.findIndex(u => u.id === userData.id);
+    if (userIndex === -1) {
+      throw new Error('User not found');
+    }
+    
+    users[userIndex] = {
+      ...users[userIndex],
+      ...userData,
+      updated_at: new Date().toISOString()
+    };
+    
+    await storage.set('users', users);
+    
+    return {
+      success: true,
+      data: users[userIndex],
+      message: 'User updated successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error updating user:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to update user'
+    };
+  }
+});
+
+// Delete User
+resolver.define('deleteUser', async (req) => {
+  try {
+    const { userId } = req.payload || {};
+    const users = await storage.get('users') || [];
+    
+    const filteredUsers = users.filter(u => u.id !== userId);
+    await storage.set('users', filteredUsers);
+    
+    return {
+      success: true,
+      message: 'User deleted successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error deleting user:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to delete user'
+    };
+  }
+});
+
+// Get User by ID
+resolver.define('getUserById', async (req) => {
+  try {
+    const { userId } = req.payload || {};
+    const users = await storage.get('users') || [];
+    
+    const user = users.find(u => u.id === userId || u.jira_account_id === userId);
+    
+    if (!user) {
+      return {
+        success: false,
+        message: 'User not found'
+      };
+    }
+    
+    return {
+      success: true,
+      data: user
+    };
+  } catch (error) {
+    console.error('❌ Error getting user:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get user'
+    };
+  }
+});
+
+// Cancel PTO Request
+resolver.define('cancelPTORequest', async (req) => {
+  try {
+    const { requestId } = req.payload || {};
+    const requests = await storage.get('pto_requests') || [];
+    
+    const requestIndex = requests.findIndex(r => r.id === requestId);
+    if (requestIndex === -1) {
+      throw new Error('PTO request not found');
+    }
+    
+    requests[requestIndex].status = 'cancelled';
+    requests[requestIndex].updated_at = new Date().toISOString();
+    
+    await storage.set('pto_requests', requests);
+    
+    return {
+      success: true,
+      data: requests[requestIndex],
+      message: 'PTO request cancelled successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error cancelling PTO request:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to cancel PTO request'
+    };
+  }
+});
+// PTO Balances Management
+resolver.define('getUserPTOBalances', async (req) => {
+  try {
+    const { accountId } = req.payload || {};
+    const balances = await storage.get('pto_balances') || [];
+    
+    const userBalances = balances.filter(b => b.user_id === accountId || b.account_id === accountId);
+    
+    return {
+      success: true,
+      data: userBalances
+    };
+  } catch (error) {
+    console.error('❌ Error getting PTO balances:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get PTO balances'
+    };
+  }
+});
+
+// Search Database Users
+resolver.define('searchDatabaseUsers', async (req) => {
+  try {
+    const { query, filterBy = 'all', startAt = 0, maxResults = 50 } = req.payload || {};
+    const users = await storage.get('users') || [];
+    
+    let filteredUsers = [...users];
+    
+    // Apply search query if provided
+    if (query && query.length >= 1) {
+      const searchLower = query.toLowerCase();
+      filteredUsers = filteredUsers.filter(user => 
+        (user.display_name || '').toLowerCase().includes(searchLower) ||
+        (user.first_name || '').toLowerCase().includes(searchLower) ||
+        (user.last_name || '').toLowerCase().includes(searchLower) ||
+        (user.email_address || '').toLowerCase().includes(searchLower)
+      );
+    }
+    
+    // Apply pagination
+    const total = filteredUsers.length;
+    const paginatedUsers = filteredUsers.slice(startAt, startAt + maxResults);
+    
+    return {
+      success: true,
+      data: {
+        users: paginatedUsers,
+        total,
+        startAt,
+        maxResults,
+        isLast: startAt + maxResults >= total
+      }
+    };
+  } catch (error) {
+    console.error('❌ Error searching users:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to search users'
+    };
+  }
+});
+
+// Get Pending Requests (for managers)
+resolver.define('getPendingRequests', async (req) => {
+  try {
+    const { managerId } = req.payload || {};
+    let requests = await storage.get('pto_requests') || [];
+    
+    // Filter for pending requests
+    requests = requests.filter(request => request.status === 'pending');
+    
+    // If managerId provided, filter by manager
+    if (managerId) {
+      requests = requests.filter(request => request.manager_id === managerId);
+    }
+    
+    // Sort by submission date (oldest first for managers to review)
+    requests.sort((a, b) => new Date(a.submitted_at) - new Date(b.submitted_at));
+    
+    return {
+      success: true,
+      data: requests
+    };
+  } catch (error) {
+    console.error('❌ Error getting pending requests:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get pending requests'
+    };
+  }
+});
+
+// Get All Requests (for admins)
+resolver.define('getAllRequests', async (req) => {
+  try {
+    const { status, startDate, endDate, startAt = 0, maxResults = 100 } = req.payload || {};
+    let requests = await storage.get('pto_requests') || [];
+    
+    // Filter by status if provided
+    if (status && status !== 'all') {
+      requests = requests.filter(request => request.status === status);
+    }
+    
+    // Filter by date range if provided
+    if (startDate) {
+      requests = requests.filter(request => request.start_date >= startDate);
+    }
+    if (endDate) {
+      requests = requests.filter(request => request.end_date <= endDate);
+    }
+    
+    // Sort by creation date (newest first)
+    requests.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    
+    // Apply pagination
+    const total = requests.length;
+    const paginatedRequests = requests.slice(startAt, startAt + maxResults);
+    
+    return {
+      success: true,
+      data: {
+        requests: paginatedRequests,
+        total,
+        startAt,
+        maxResults,
+        isLast: startAt + maxResults >= total
+      }
+    };
+  } catch (error) {
+    console.error('❌ Error getting all requests:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get all requests'
+    };
+  }
+});
+
+// Team Analytics
+resolver.define('getTeamAnalytics', async (req) => {
+  try {
+    const { teamId, dateRange } = req.payload || {};
+    const requests = await storage.get('pto_requests') || [];
+    const users = await storage.get('users') || [];
+    
+    // Get team members
+    const teamMembers = users.filter(user => {
+      if (user.team_memberships && Array.isArray(user.team_memberships)) {
+        return user.team_memberships.some(membership => membership.team_id === teamId);
+      }
+      return user.team_id === teamId;
+    });
+    
+    const teamMemberIds = teamMembers.map(member => member.jira_account_id || member.id);
+    
+    // Filter requests for team members
+    let teamRequests = requests.filter(request => 
+      teamMemberIds.includes(request.requester_id)
+    );
+    
+    // Apply date filter if provided
+    if (dateRange && dateRange.start) {
+      teamRequests = teamRequests.filter(request => request.start_date >= dateRange.start);
+    }
+    if (dateRange && dateRange.end) {
+      teamRequests = teamRequests.filter(request => request.end_date <= dateRange.end);
+    }
+    
+    // Calculate analytics
+    const analytics = {
+      totalMembers: teamMembers.length,
+      totalRequests: teamRequests.length,
+      pendingRequests: teamRequests.filter(r => r.status === 'pending').length,
+      approvedRequests: teamRequests.filter(r => r.status === 'approved').length,
+      declinedRequests: teamRequests.filter(r => r.status === 'declined').length,
+      totalDaysRequested: teamRequests.reduce((sum, req) => sum + (req.total_days || 0), 0),
+      requests: teamRequests.slice(0, 10) // Latest 10 requests
+    };
+    
+    return {
+      success: true,
+      data: analytics
+    };
+  } catch (error) {
+    console.error('❌ Error getting team analytics:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get team analytics'
+    };
+  }
+});
+
+// Debug Storage
+resolver.define('debugStorage', async (req) => {
+  try {
+    const users = await storage.get('users') || [];
+    const teams = await storage.get('teams') || [];
+    const admins = await storage.get('pto_admins') || [];
+    const ptoRequests = await storage.get('pto_requests') || [];
+    const ptoDailySchedules = await storage.get('pto_daily_schedules') || [];
+    
+    return {
+      success: true,
+      data: {
+        users: users.length,
+        teams: teams.length,
+        admins: admins.length,
+        ptoRequests: ptoRequests.length,
+        ptoDailySchedules: ptoDailySchedules.length,
+        summary: {
+          totalUsers: users.length,
+          totalTeams: teams.length,
+          totalAdmins: admins.length,
+          totalRequests: ptoRequests.length
+        }
+      }
+    };
+  } catch (error) {
+    console.error('❌ Error debugging storage:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to debug storage'
+    };
+  }
+});
+
+// Test Connectivity
 resolver.define('testConnectivity', async (req) => {
   try {
     console.log('🔗 Testing Jira API connectivity...');
     
-    // Simple health check endpoint
     const response = await Promise.race([
       api.asUser().requestJira(route`/rest/api/3/serverInfo`),
       new Promise((_, reject) => 
@@ -142,7 +1058,6 @@ resolver.define('testConnectivity', async (req) => {
         status: response.status
       };
     }
-    
   } catch (error) {
     console.error('❌ Connectivity test failed:', error);
     return {
@@ -155,15 +1070,14 @@ resolver.define('testConnectivity', async (req) => {
     };
   }
 });
+
+// Get Internal Jira Users
 resolver.define('getInternalJiraUsers', async (req) => {
   try {
     const { startAt = 0, maxResults = 50 } = req.payload || {};
     console.log(`🔍 Getting internal Jira users - startAt: ${startAt}, maxResults: ${maxResults}`);
     
-    // Use a fixed project key instead of searching for one
-    const projectKey = 'SDTI';
-    console.log(`Using project ${projectKey} to get assignable users`);
-    
+    const projectKey = 'SDTI'; // Use your project key
     const usersResponse = await api.asUser().requestJira(
       route`/rest/api/3/user/assignable/search?project=${projectKey}&startAt=${startAt}&maxResults=${maxResults}`
     );
@@ -173,737 +1087,35 @@ resolver.define('getInternalJiraUsers', async (req) => {
     }
     
     const users = await usersResponse.json();
-    
-    // Get database users to filter out existing ones
-    const dbUsers = await storage.get('users') || [];
-    const existingIds = new Set();
-    dbUsers.forEach(user => {
-      if (user.jira_account_id) existingIds.add(user.jira_account_id);
-      if (user.email_address) existingIds.add(user.email_address.toLowerCase());
-    });
-
-    // Filter users that don't exist in database
-    const newUsers = users.filter(user => {
-      const accountId = user.accountId;
-      return !existingIds.has(accountId);
-    });
-
-    // Get email addresses for new users in batches
-    const userDetails = [];
-    const batchSize = 10;
-    
-    for (let i = 0; i < newUsers.length; i += batchSize) {
-      const batch = newUsers.slice(i, i + batchSize);
-      const batchPromises = batch.map(async (user) => {
-        try {
-          const userResponse = await api.asUser().requestJira(
-            route`/rest/api/3/user?accountId=${user.accountId}`
-          );
-          
-          if (userResponse.ok) {
-            const userData = await userResponse.json();
-            return {
-              accountId: user.accountId,
-              displayName: user.displayName,
-              emailAddress: userData.emailAddress,
-              avatarUrl: user.avatarUrls?.['48x48'] || user.avatarUrls?.['32x32'] || null,
-              active: user.active !== false
-            };
-          }
-        } catch (error) {
-          console.warn(`Failed to get details for user ${user.accountId}:`, error.message);
-          // If we can't get detailed info, use the basic info
-          return {
-            accountId: user.accountId,
-            displayName: user.displayName,
-            emailAddress: null,
-            avatarUrl: user.avatarUrls?.['48x48'] || user.avatarUrls?.['32x32'] || null,
-            active: user.active !== false
-          };
-        }
-      });
-      
-      const batchResults = await Promise.all(batchPromises);
-      userDetails.push(...batchResults);
-      
-      // Small delay between batches to be nice to the API
-      if (i + batchSize < newUsers.length) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-
-    // Sort by display name
-    userDetails.sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
-    
-    const total = users.length >= maxResults ? startAt + maxResults + 1 : startAt + users.length;
-    const isLast = users.length < maxResults;
-    
-    console.log(`✅ Found ${userDetails.length} new assignable users with details`);
+    const userArray = Array.isArray(users) ? users : [];
     
     return {
       success: true,
       data: {
-        users: userDetails,
-        startAt,
-        maxResults,
-        total,
-        isLast
+        users: userArray,
+        startAt: startAt,
+        maxResults: maxResults,
+        total: userArray.length,
+        isLast: userArray.length < maxResults
       }
     };
   } catch (error) {
     console.error('❌ Error getting Jira users:', error);
     return {
       success: false,
-      message: 'Failed to get Jira users: ' + error.message,
+      message: error.message || 'Failed to get Jira users',
       data: {
         users: [],
         startAt: 0,
-        maxResults,
+        maxResults: maxResults,
         total: 0,
         isLast: true
       }
     };
   }
 });
-resolver.define('storePTORequest', async (req) => {
-  try {
-    console.log('📝 Storing enhanced PTO Request:', req.payload);
-    
-    const { reporter, manager, startDate, endDate, leaveType, reason, dailySchedules } = req.payload || {};
-    
-    // Enhanced validation
-    if (!reporter || !reporter.accountId) {
-      throw new Error('Reporter information is required');
-    }
-    
-    if (!manager || !manager.accountId) {
-      throw new Error('Manager information is required');
-    }
-    
-    if (!startDate || !endDate) {
-      throw new Error('Start and end dates are required');
-    }
-    
-    if (!leaveType) {
-      throw new Error('Leave type is required');
-    }
-    
-    if (new Date(startDate) > new Date(endDate)) {
-      throw new Error('Start date cannot be after end date');
-    }
-    
-    // Check for conflicts with existing requests
-    const existingRequests = await storage.get('pto_requests') || [];
-    const conflictingRequests = existingRequests.filter(request => 
-      request.requester_id === reporter.accountId &&
-      request.status !== 'declined' &&
-      !(new Date(endDate) < new Date(request.start_date) || new Date(startDate) > new Date(request.end_date))
-    );
-    
-    if (conflictingRequests.length > 0) {
-      throw new Error('This request conflicts with existing PTO requests for the same dates');
-    }
-    
-    // Calculate totals from daily schedules or date range
-    let totalDays, totalHours;
-    
-    if (dailySchedules && dailySchedules.length > 0) {
-      totalDays = dailySchedules.reduce((sum, schedule) => 
-        sum + (schedule.type === 'FULL_DAY' ? 1 : 0.5), 0
-      );
-      totalHours = dailySchedules.reduce((sum, schedule) => 
-        sum + (schedule.type === 'FULL_DAY' ? 8 : 4), 0
-      );
-    } else {
-      // Calculate based on business days
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      let businessDays = 0;
-      
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const dayOfWeek = d.getDay();
-        if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not Sunday or Saturday
-          businessDays++;
-        }
-      }
-      
-      totalDays = businessDays;
-      totalHours = businessDays * 8;
-    }
-    
-    // Create new request with enhanced data
-    const newRequest = {
-      id: `pto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      requester_id: reporter.accountId,
-      requester_name: reporter.displayName,
-      requester_email: reporter.emailAddress,
-      requester_avatar: reporter.avatarUrl,
-      manager_id: manager.accountId,
-      manager_name: manager.displayName,
-      manager_email: manager.emailAddress,
-      start_date: startDate,
-      end_date: endDate,
-      leave_type: leaveType,
-      reason: reason || '',
-      status: 'pending',
-      total_days: totalDays,
-      total_hours: totalHours,
-      submitted_at: new Date().toISOString(),
-      reviewed_at: null,
-      daily_schedules: dailySchedules || [],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    
-    // Add to storage
-    existingRequests.push(newRequest);
-    await storage.set('pto_requests', existingRequests);
-    
-    // Create daily schedule records if provided
-    if (dailySchedules && dailySchedules.length > 0) {
-      const dailyScheduleRecords = await storage.get('pto_daily_schedules') || [];
-      
-      for (const schedule of dailySchedules) {
-        const scheduleRecord = {
-          id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          pto_request_id: newRequest.id,
-          date: schedule.date,
-          schedule_type: schedule.type,
-          leave_type: schedule.leaveType,
-          hours: schedule.type === 'FULL_DAY' ? 8 : 4,
-          requester_id: reporter.accountId,
-          requester_name: reporter.displayName,
-          requester_email: reporter.emailAddress,
-          manager_id: manager.accountId,
-          manager_name: manager.displayName,
-          manager_email: manager.emailAddress,
-          created_at: new Date().toISOString()
-        };
-        dailyScheduleRecords.push(scheduleRecord);
-      }
-      
-      await storage.set('pto_daily_schedules', dailyScheduleRecords);
-    }
-    
-    console.log('✅ Enhanced PTO request stored successfully:', newRequest.id);
-    
-    return {
-      success: true,
-      data: newRequest,
-      message: 'PTO request submitted successfully'
-    };
-  } catch (error) {
-    console.error('❌ Error storing enhanced PTO request:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to store PTO request'
-    };
-  }
-});
-resolver.define('getPTORequests', async (req) => {
-  try {
-    const filters = req.payload || {};
-    console.log('📋 Getting PTO Requests with filters:', filters);
-    
-    // Get regular PTO requests using chunked retrieval
-    let requests = [];
-    try {
-      requests = await importService.getChunkedData('pto_requests') || [];
-      console.log('📦 Loaded PTO requests from chunked storage:', requests.length);
-    } catch (error) {
-      console.warn('⚠️ Could not load chunked requests, trying direct:', error.message);
-      requests = await storage.get('pto_requests') || [];
-      console.log('📦 Loaded PTO requests from direct storage:', requests.length);
-    }
-    
-    // Get daily schedules (imported data) using chunked retrieval
-    let dailySchedules = [];
-    try {
-      dailySchedules = await importService.getChunkedData('pto_daily_schedules') || [];
-      console.log('📦 Loaded daily schedules from chunked storage:', dailySchedules.length);
-    } catch (error) {
-      console.warn('⚠️ Could not load chunked daily schedules, trying direct:', error.message);
-      dailySchedules = await storage.get('pto_daily_schedules') || [];
-      console.log('📦 Loaded daily schedules from direct storage:', dailySchedules.length);
-    }
-    
-    // Transform daily schedules to match the expected format for the frontend
-    const transformedSchedules = dailySchedules.map(schedule => ({
-      ...schedule,
-      // Ensure these fields exist for frontend compatibility
-      start_date: schedule.date,
-      end_date: schedule.date,
-      total_days: schedule.hours ? schedule.hours / 8 : 1,
-      total_hours: schedule.hours || 8,
-      submitted_at: schedule.created_at,
-      // Mark as imported data
-      is_imported: true,
-      source: 'daily_schedule'
-    }));
-    
-    // Combine both types of data
-    let allEvents = [...requests, ...transformedSchedules];
-    
-    console.log('📋 Combined data:', {
-      requests: requests.length,
-      dailySchedules: dailySchedules.length,
-      transformed: transformedSchedules.length,
-      total: allEvents.length
-    });
-    
-    // Apply filters to combined data
-    if (filters.status) {
-      allEvents = allEvents.filter(r => r.status === filters.status);
-    }
-    
-    if (filters.requester_id) {
-      allEvents = allEvents.filter(r => r.requester_id === filters.requester_id);
-    }
-    
-    if (filters.manager_email) {
-      allEvents = allEvents.filter(r => r.manager_email === filters.manager_email);
-    }
-    
-    if (filters.startDate && filters.endDate) {
-      allEvents = allEvents.filter(event => {
-        const eventDate = event.date || event.start_date;
-        return eventDate >= filters.startDate && eventDate <= filters.endDate;
-      });
-    }
-    
-    console.log('📋 Returning filtered events:', allEvents.length);
-    
-    return {
-      success: true,
-      data: allEvents
-    };
-  } catch (error) {
-    console.error('❌ Error getting PTO requests:', error);
-    return {
-      success: false,
-      message: 'Failed to get PTO requests: ' + error.message
-    };
-  }
-});
-resolver.define('getPendingRequests', async (req) => {
-  try {
-    const { managerEmail } = req.payload || {};
-    console.log('⏳ Getting pending requests for manager:', managerEmail);
-    
-    const requests = await storage.get('pto_requests') || [];
-    
-    const pendingRequests = requests.filter(request => 
-      request.status === 'pending' && request.manager_email === managerEmail
-    );
-    
-    return {
-      success: true,
-      data: pendingRequests
-    };
-  } catch (error) {
-    console.error('❌ Error getting pending requests:', error);
-    return {
-      success: false,
-      message: 'Failed to get pending requests: ' + error.message
-    };
-  }
-});
-resolver.define('updatePTORequest', async (req) => {
-  try {
-    const { requestId, status, comment } = req.payload || {};
-    console.log(`✅ Updating PTO request ${requestId} to ${status}`);
-    
-    const requests = await storage.get('pto_requests') || [];
-    const requestIndex = requests.findIndex(r => r.id === requestId);
-    
-    if (requestIndex === -1) {
-      throw new Error('PTO request not found');
-    }
-    
-    // Update request
-    requests[requestIndex] = {
-      ...requests[requestIndex],
-      status: status,
-      reviewed_at: new Date().toISOString(),
-      reviewer_comments: comment || null
-    };
-    
-    // Save back to storage
-    await storage.set('pto_requests', requests);
-    
-    return {
-      success: true,
-      data: requests[requestIndex],
-      message: `PTO request ${status} successfully`
-    };
-  } catch (error) {
-    console.error('❌ Error updating PTO request:', error);
-    return {
-      success: false,
-      message: 'Failed to update PTO request: ' + error.message
-    };
-  }
-});
-// not being used:
-resolver.define('cancelPTORequest', async (req) => {
-  try {
-    const { requestId, cancelledBy, reason } = req.payload || {};
-    
-    if (!requestId) {
-      throw new Error('Request ID is required');
-    }
-    
-    console.log(`🗑️ Cancelling PTO request ${requestId}`);
-    
-    const requests = await storage.get('pto_requests') || [];
-    const requestIndex = requests.findIndex(r => r.id === requestId);
-    
-    if (requestIndex === -1) {
-      throw new Error('PTO request not found');
-    }
-    
-    const request = requests[requestIndex];
-    
-    // Check if user can cancel this request
-    if (request.requester_id !== cancelledBy) {
-      throw new Error('You can only cancel your own requests');
-    }
-    
-    // Remove the request
-    requests.splice(requestIndex, 1);
-    await storage.set('pto_requests', requests);
-    
-    // Remove associated daily schedules
-    const dailySchedules = await storage.get('pto_daily_schedules') || [];
-    const filteredSchedules = dailySchedules.filter(s => s.pto_request_id !== requestId);
-    await storage.set('pto_daily_schedules', filteredSchedules);
-    
-    // Log the cancellation
-    const cancelLog = await storage.get('pto_cancel_log') || [];
-    cancelLog.push({
-      request_id: requestId,
-      original_request: request,
-      cancelled_by: cancelledBy,
-      cancellation_reason: reason || 'User cancelled',
-      cancelled_at: new Date().toISOString()
-    });
-    await storage.set('pto_cancel_log', cancelLog);
-    
-    return {
-      success: true,
-      message: 'PTO request cancelled successfully'
-    };
-  } catch (error) {
-    console.error('❌ Error cancelling PTO request:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to cancel PTO request'
-    };
-  }
-});
-//
-resolver.define('getTeams', async (req) => {
-  try {
-    console.log('👥 Getting teams');
-    const result = await teamUserService.getTeams();
-    return result;
-  } catch (error) {
-    console.error('❌ Error getting teams:', error);
-    return {
-      success: false,
-      message: 'Failed to get teams: ' + error.message
-    };
-  }
-});
-resolver.define('createTeam', async (req) => {
-  try {
-    const result = await teamUserService.createTeam(req.payload || {});
-    return result;
-  } catch (error) {
-    console.error('❌ Error in createTeam resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to create team'
-    };
-  }
-});
-resolver.define('updateTeam', async (req) => {
-  try {
-    const result = await teamUserService.updateTeam(req.payload || {});
-    return result;
-  } catch (error) {
-    console.error('❌ Error in updateTeam resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to update team'
-    };
-  }
-});
-resolver.define('deleteTeam', async (req) => {
-  try {
-    const { teamId, deletedBy } = req.payload || {};
-    const result = await teamUserService.deleteTeam(teamId, deletedBy);
-    return result;
-  } catch (error) {
-    console.error('❌ Error in deleteTeam resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to delete team'
-    };
-  }
-});
-//used in team-user-service.js
-resolver.define('addTeamMember', async (req) => {
-  try {
-    const { teamId, member } = req.payload || {};
-    const result = await teamUserService.addTeamMember(teamId, member);
-    return result;
-  } catch (error) {
-    console.error('❌ Error in addTeamMember resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to add team member'
-    };
-  }
-});
-resolver.define('removeTeamMember', async (req) => {
-  try {
-    const { teamId, memberAccountId, removedBy } = req.payload || {};
-    const result = await teamUserService.removeTeamMember(teamId, memberAccountId, removedBy);
-    return result;
-  } catch (error) {
-    console.error('❌ Error in removeTeamMember resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to remove team member'
-    };
-  }
-});
-//
-resolver.define('getUsers', async (req) => {
-  try {
-    const result = await teamUserService.getUsers();
-    return result;
-  } catch (error) {
-    console.error('❌ Error in getUsers resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to get users'
-    };
-  }
-});
-resolver.define('getUserById', async (req) => {
-  try {
-    const { userId } = req.payload || {};
-    const result = await teamUserService.getUserById(userId);
-    return result;
-  } catch (error) {
-    console.error('❌ Error in getUserById resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to get user'
-    };
-  }
-});
-resolver.define('getUsersByTeam', async (req) => {
-  try {
-    const { teamId } = req.payload || {};
-    const result = await teamUserService.getUsersByTeam(teamId);
-    return result;
-  } catch (error) {
-    console.error('❌ Error in getUsersByTeam resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to get team users'
-    };
-  }
-});
-resolver.define('createUser', async (req) => {
-  try {
-    const result = await teamUserService.createUser(req.payload || {});
-    return result;
-  } catch (error) {
-    console.error('❌ Error in createUser resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to create user'
-    };
-  }
-});
-resolver.define('updateUser', async (req) => {
-  try {
-    const result = await teamUserService.updateUser(req.payload || {});
-    return result;
-  } catch (error) {
-    console.error('❌ Error in updateUser resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to update user'
-    };
-  }
-});
-resolver.define('deleteUser', async (req) => {
-  try {
-    const { userId, deletedBy } = req.payload || {};
-    const result = await teamUserService.deleteUser(userId, deletedBy);
-    return result;
-  } catch (error) {
-    console.error('❌ Error in deleteUser resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to delete user'
-    };
-  }
-});
-resolver.define('getTeamPTORequests', async (req) => {
-  try {
-    const { teamId, dateRange } = req.payload || {};
-    const result = await teamUserService.getTeamPTORequests(teamId, dateRange);
-    return result;
-  } catch (error) {
-    console.error('❌ Error in getTeamPTORequests resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to get team PTO requests'
-    };
-  }
-})
-resolver.define('checkUserAdminStatus', async (req) => {
-  try {
-    const { accountId } = req.payload || {};
-    console.log('🔍 Checking admin status for:', accountId);
-    
-    const admins = await storage.get('pto_admins') || [];
-    const isAdmin = admins.includes(accountId);
-    
-    return {
-      success: true,
-      data: { isAdmin }
-    };
-  } catch (error) {
-    console.error('❌ Error checking admin status:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-resolver.define('bulkImportUsersFromJira', async (req) => {
-  try {
-    const { selectedUserIds, defaultTeamId, defaultDepartment } = req.payload || {};
-    
-    if (!selectedUserIds || selectedUserIds.length === 0) {
-      throw new Error('No users selected for import');
-    }
-    
-    console.log(`📥 Bulk importing ${selectedUserIds.length} users from Jira`);
-    
-    // Get detailed user information from Jira for selected users
-    const userDetails = [];
-    const batchSize = 10; // Process in batches to avoid API limits
-    
-    for (let i = 0; i < selectedUserIds.length; i += batchSize) {
-      const batch = selectedUserIds.slice(i, i + batchSize);
-      
-      for (const accountId of batch) {
-        try {
-          const userResponse = await api.asUser().requestJira(
-            route`/rest/api/3/user?accountId=${accountId}`
-          );
-          
-          if (userResponse.ok) {
-            const userData = await userResponse.json();
-            userDetails.push(userData);
-          }
-        } catch (error) {
-          console.warn(`Failed to get details for user ${accountId}:`, error.message);
-        }
-      }
-      
-      // Small delay between batches to be nice to the API
-      if (i + batchSize < selectedUserIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-    
-    // Get existing users to avoid duplicates
-    const existingUsers = await storage.get('users') || [];
-    const existingIds = existingUsers.map(user => 
-      user.jira_account_id || user.email_address
-    ).filter(Boolean);
-    
-    const usersToImport = userDetails.filter(jiraUser => 
-      !existingIds.includes(jiraUser.accountId) && 
-      !existingIds.includes(jiraUser.emailAddress)
-    );
-    
-    if (usersToImport.length === 0) {
-      return {
-        success: false,
-        message: 'All selected users already exist in the system',
-        data: {
-          importedCount: 0,
-          skippedCount: selectedUserIds.length,
-          importedUsers: []
-        }
-      };
-    }
-    
-    // Create users with enhanced data
-    const newUsers = usersToImport.map(jiraUser => {
-      const nameParts = (jiraUser.displayName || '').split(' ');
-      const firstName = nameParts[0] || '';
-      const lastName = nameParts.slice(1).join(' ') || '';
-      
-      return {
-        id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        first_name: firstName,
-        last_name: lastName,
-        display_name: jiraUser.displayName || '',
-        email_address: jiraUser.emailAddress || '',
-        jira_account_id: jiraUser.accountId,
-        employment_type: 'full-time',
-        hire_date: '',
-        team_id: defaultTeamId || null,
-        capacity: 40,
-        availability: getDefaultAvailability(),
-        avatar_url: jiraUser.avatarUrls?.['48x48'] || jiraUser.avatarUrls?.['32x32'] || '',
-        status: 'active',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        created_from_jira: true,
-        bulk_imported: true
-      };
-    });
-    
-    // Add to storage
-    const updatedUsers = [...existingUsers, ...newUsers];
-    await storage.set('users', updatedUsers);
-    
-    console.log(`✅ Successfully imported ${newUsers.length} users`);
-    
-    return {
-      success: true,
-      data: {
-        importedCount: newUsers.length,
-        skippedCount: selectedUserIds.length - newUsers.length,
-        importedUsers: newUsers
-      },
-      message: `Successfully imported ${newUsers.length} users from Jira`
-    };
-  } catch (error) {
-    console.error('❌ Error bulk importing users:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to bulk import users',
-      data: {
-        importedCount: 0,
-        skippedCount: 0,
-        importedUsers: []
-      }
-    };
-  }
-});
+
+// Create User from Jira
 resolver.define('createUserFromJira', async (req) => {
   try {
     const { jiraUser, teamId, additionalData } = req.payload || {};
@@ -987,194 +1199,131 @@ resolver.define('createUserFromJira', async (req) => {
     };
   }
 });
-resolver.define('searchDatabaseUsers', async (req) => {
+
+// Bulk Import Users
+resolver.define('bulkImportUsers', async (req) => {
   try {
-    const { query, filterBy = 'all', startAt = 0, maxResults = 50 } = req.payload || {};
-    console.log('🔍 Searching database users:', { query, filterBy, startAt, maxResults });
+    const { selectedUserIds, defaultTeamId } = req.payload || {};
     
-    const users = await storage.get('users') || [];
-    let filteredUsers = [...users];
-    
-    // Apply team filter
-    if (filterBy === 'withTeam') {
-      filteredUsers = filteredUsers.filter(user => user.team_id);
-    } else if (filterBy === 'withoutTeam') {
-      filteredUsers = filteredUsers.filter(user => !user.team_id);
+    if (!selectedUserIds || selectedUserIds.length === 0) {
+      throw new Error('No users selected for import');
     }
     
-    // Apply search query if provided
-    if (query && query.length >= 1) {
-      const searchLower = query.toLowerCase();
-      filteredUsers = filteredUsers.filter(user => {
-        const displayName = (user.display_name || user.displayName || '').toLowerCase();
-        const email = (user.email_address || user.emailAddress || '').toLowerCase();
-        const firstName = (user.first_name || user.firstName || '').toLowerCase();
-        const lastName = (user.last_name || user.lastName || '').toLowerCase();
-        
-        return displayName.includes(searchLower) || 
-               email.includes(searchLower) ||
-               firstName.includes(searchLower) ||
-               lastName.includes(searchLower);
-      });
+    console.log(`🔄 Bulk importing ${selectedUserIds.length} users`);
+    
+    // Get detailed user information from Jira for each user
+    const userDetails = [];
+    const batchSize = 10;
+    
+    for (let i = 0; i < selectedUserIds.length; i += batchSize) {
+      const batch = selectedUserIds.slice(i, i + batchSize);
+      
+      for (const accountId of batch) {
+        try {
+          const userResponse = await api.asUser().requestJira(
+            route`/rest/api/3/user?accountId=${accountId}`
+          );
+          
+          if (userResponse.ok) {
+            const userData = await userResponse.json();
+            userDetails.push(userData);
+          }
+        } catch (error) {
+          console.warn(`Failed to get details for user ${accountId}:`, error.message);
+        }
+      }
+      
+      // Small delay between batches
+      if (i + batchSize < selectedUserIds.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
     
-    // Sort by display name
-    filteredUsers.sort((a, b) => {
-      const nameA = (a.display_name || a.displayName || '').toLowerCase();
-      const nameB = (b.display_name || b.displayName || '').toLowerCase();
-      return nameA.localeCompare(nameB);
+    // Get existing users to avoid duplicates
+    const existingUsers = await storage.get('users') || [];
+    const existingIds = existingUsers.map(user => 
+      user.jira_account_id || user.email_address
+    ).filter(Boolean);
+    
+    const usersToImport = userDetails.filter(jiraUser => 
+      !existingIds.includes(jiraUser.accountId) && 
+      !existingIds.includes(jiraUser.emailAddress)
+    );
+    
+    if (usersToImport.length === 0) {
+      return {
+        success: false,
+        message: 'All selected users already exist in the system',
+        data: {
+          importedCount: 0,
+          skippedCount: selectedUserIds.length,
+          importedUsers: []
+        }
+      };
+    }
+    
+    // Create users with enhanced data
+    const newUsers = usersToImport.map(jiraUser => {
+      const nameParts = (jiraUser.displayName || '').split(' ');
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+      
+      return {
+        id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        first_name: firstName,
+        last_name: lastName,
+        display_name: jiraUser.displayName || '',
+        email_address: jiraUser.emailAddress || '',
+        jira_account_id: jiraUser.accountId,
+        employment_type: 'full-time',
+        hire_date: '',
+        team_id: defaultTeamId || null,
+        capacity: 40,
+        availability: getDefaultAvailability(),
+        avatar_url: jiraUser.avatarUrls?.['48x48'] || jiraUser.avatarUrls?.['32x32'] || '',
+        status: 'active',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        created_from_jira: true,
+        bulk_imported: true
+      };
     });
     
-    // Apply pagination
-    const total = filteredUsers.length;
-    const paginatedUsers = filteredUsers.slice(startAt, startAt + maxResults);
-    const isLast = (startAt + paginatedUsers.length) >= total;
+    // Add to storage
+    const updatedUsers = [...existingUsers, ...newUsers];
+    await storage.set('users', updatedUsers);
+    
+    console.log(`✅ Successfully imported ${newUsers.length} users`);
     
     return {
       success: true,
       data: {
-        users: paginatedUsers,
-        total,
-        startAt,
-        maxResults,
-        isLast
-      }
+        importedCount: newUsers.length,
+        skippedCount: selectedUserIds.length - newUsers.length,
+        importedUsers: newUsers
+      },
+      message: `Successfully imported ${newUsers.length} users from Jira`
     };
   } catch (error) {
-    console.error('❌ Error searching database users:', error);
+    console.error('❌ Error bulk importing users:', error);
     return {
       success: false,
-      message: error.message || 'Failed to search users'
+      message: error.message || 'Failed to bulk import users',
+      data: {
+        importedCount: 0,
+        skippedCount: 0,
+        importedUsers: []
+      }
     };
   }
 });
-resolver.define('editPTORequest', async (req) => {
+
+// Get Project Users (Paginated)
+resolver.define('getProjectUsersPaginated', async (req) => {
   try {
-    const { requestId, updatedData, editedBy } = req.payload || {};
-    console.log(`✏️ Editing PTO request ${requestId}`);
+    const { projectKey, startAt = 0, maxResults = 50 } = req.payload;
+    console.log(`[Backend] getProjectUsersPaginated called for project: ${projectKey}, startAt: ${startAt}, maxResults: ${maxResults}`);
     
-    if (!requestId) {
-      throw new Error('Request ID is required');
-    }
-    
-    const requests = await storage.get('pto_requests') || [];
-    const requestIndex = requests.findIndex(r => r.id === requestId);
-    
-    if (requestIndex === -1) {
-      throw new Error('PTO request not found');
-    }
-    
-    const existingRequest = requests[requestIndex];
-    
-    // Check if user can edit this request
-    if (existingRequest.requester_id !== editedBy) {
-      throw new Error('You can only edit your own requests');
-    }
-    
-    // Only allow editing of pending requests
-    if (existingRequest.status !== 'pending') {
-      throw new Error('Only pending requests can be edited');
-    }
-    
-    // Check for conflicts with other requests (excluding the current one)
-    if (updatedData.startDate && updatedData.endDate) {
-      const conflictingRequests = requests.filter(request => 
-        request.id !== requestId &&
-        request.requester_id === editedBy &&
-        request.status !== 'declined' &&
-        !(new Date(updatedData.endDate) < new Date(request.start_date) || 
-          new Date(updatedData.startDate) > new Date(request.end_date))
-      );
-      
-      if (conflictingRequests.length > 0) {
-        throw new Error('This request conflicts with existing PTO requests for the same dates');
-      }
-    }
-    
-    // Calculate new totals if daily schedules are provided
-    let totalDays = updatedData.totalDays;
-    let totalHours = updatedData.totalHours;
-    
-    if (updatedData.dailySchedules && updatedData.dailySchedules.length > 0) {
-      totalDays = updatedData.dailySchedules.reduce((sum, schedule) => 
-        sum + (schedule.type === 'FULL_DAY' ? 1 : 0.5), 0
-      );
-      totalHours = updatedData.dailySchedules.reduce((sum, schedule) => 
-        sum + (schedule.type === 'FULL_DAY' ? 8 : 4), 0
-      );
-    }
-    
-    // Update the request - reset to pending and clear review data
-    requests[requestIndex] = {
-      ...existingRequest,
-      ...updatedData,
-      total_days: totalDays || existingRequest.total_days,
-      total_hours: totalHours || existingRequest.total_hours,
-      status: 'pending', // Reset to pending after edit
-      reviewed_at: null,
-      daily_schedules: updatedData.dailySchedules || [],
-      reviewer_comments: null,
-      updated_at: new Date().toISOString(),
-      edited_at: new Date().toISOString(),
-      edit_history: [
-        ...(existingRequest.edit_history || []),
-        {
-          edited_at: new Date().toISOString(),
-          edited_by: editedBy,
-          previous_data: {
-            start_date: existingRequest.start_date,
-            end_date: existingRequest.end_date,
-            reason: existingRequest.reason,
-            total_days: existingRequest.total_days
-          }
-        }
-      ]
-    };
-    
-    await storage.set('pto_requests', requests);
-    
-    // Update daily schedules if provided
-    if (updatedData.dailySchedules) {
-      const allSchedules = await storage.get('pto_daily_schedules') || [];
-      const filteredSchedules = allSchedules.filter(s => s.pto_request_id !== requestId);
-      
-      const newSchedules = updatedData.dailySchedules.map(schedule => ({
-        id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        pto_request_id: requestId,
-        date: schedule.date,
-        schedule_type: schedule.type,
-        leave_type: schedule.leaveType,
-        hours: schedule.type === 'FULL_DAY' ? 8 : 4,
-        requester_id: existingRequest.requester_id,
-        requester_name: existingRequest.requester_name,
-        requester_email: existingRequest.requester_email,
-        manager_id: existingRequest.manager_id,
-        manager_name: existingRequest.manager_name,
-        manager_email: existingRequest.manager_email,
-        created_at: new Date().toISOString()
-      }));
-      
-      await storage.set('pto_daily_schedules', [...filteredSchedules, ...newSchedules]);
-    }
-    
-    return {
-      success: true,
-      data: requests[requestIndex],
-      message: 'PTO request updated successfully and resubmitted for approval'
-    };
-  } catch (error) {
-    console.error('❌ Error editing PTO request:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to edit PTO request'
-    };
-  }
-});
-resolver.define("getProjectUsersPaginated", async ({ payload }) => {
-  const { projectKey, startAt = 0, maxResults = 50 } = payload;
-  console.log(`[Backend] getProjectUsersPaginated called for project: ${projectKey}, startAt: ${startAt}, maxResults: ${maxResults}`);
-  
-  try {
     const response = await api.asUser().requestJira(
       route`/rest/api/3/user/assignable/search?project=${projectKey}&startAt=${startAt}&maxResults=${maxResults}`
     );
@@ -1184,7 +1333,6 @@ resolver.define("getProjectUsersPaginated", async ({ payload }) => {
     }
     
     const users = await response.json();    
-    // Ensure users is an array
     const userArray = Array.isArray(users) ? users : [];
     
     return {
@@ -1207,6 +1355,142 @@ resolver.define("getProjectUsersPaginated", async ({ payload }) => {
     };
   }
 });
+
+// Get Team PTO Requests
+resolver.define('getTeamPTORequests', async (req) => {
+  try {
+    const { teamId, managerId, status, startDate, endDate } = req.payload || {};
+    console.log('🔍 Getting team PTO requests for team:', teamId);
+    
+    const requests = await storage.get('pto_requests') || [];
+    const users = await storage.get('users') || [];
+    const teams = await storage.get('teams') || [];
+    
+    let teamRequests = [];
+    
+    if (teamId) {
+      // Get specific team's requests
+      const team = teams.find(t => t.id === teamId);
+      if (!team) {
+        throw new Error('Team not found');
+      }
+      
+      // Find team members
+      const teamMembers = users.filter(user => {
+        if (user.team_memberships && Array.isArray(user.team_memberships)) {
+          return user.team_memberships.some(membership => membership.team_id === teamId);
+        }
+        return user.team_id === teamId;
+      });
+      
+      const teamMemberIds = teamMembers.map(member => member.jira_account_id || member.id);
+      teamRequests = requests.filter(request => teamMemberIds.includes(request.requester_id));
+      
+    } else if (managerId) {
+      // Get requests for teams managed by this manager
+      const managedTeams = teams.filter(team => 
+        team.manager?.jira_account_id === managerId || 
+        team.manager?.id === managerId
+      );
+      
+      const managedTeamIds = managedTeams.map(team => team.id);
+      const managedTeamMembers = users.filter(user => {
+        if (user.team_memberships && Array.isArray(user.team_memberships)) {
+          return user.team_memberships.some(membership => 
+            managedTeamIds.includes(membership.team_id)
+          );
+        }
+        return managedTeamIds.includes(user.team_id);
+      });
+      
+      const managedMemberIds = managedTeamMembers.map(member => member.jira_account_id || member.id);
+      teamRequests = requests.filter(request => managedMemberIds.includes(request.requester_id));
+    } else {
+      // Return all requests if no specific team or manager
+      teamRequests = requests;
+    }
+    
+    // Filter by status if provided
+    if (status && status !== 'all') {
+      teamRequests = teamRequests.filter(request => request.status === status);
+    }
+    
+    // Filter by date range if provided
+    if (startDate) {
+      teamRequests = teamRequests.filter(request => request.start_date >= startDate);
+    }
+    if (endDate) {
+      teamRequests = teamRequests.filter(request => request.end_date <= endDate);
+    }
+    
+    // Sort by submission date (newest first)
+    teamRequests.sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+    
+    // Enrich with user data
+    const enrichedRequests = teamRequests.map(request => {
+      const requester = users.find(u => 
+        u.jira_account_id === request.requester_id || u.id === request.requester_id
+      );
+      
+      return {
+        ...request,
+        requester_details: requester ? {
+          display_name: requester.display_name,
+          email_address: requester.email_address,
+          avatar_url: requester.avatar_url
+        } : null
+      };
+    });
+    
+    return {
+      success: true,
+      data: enrichedRequests
+    };
+  } catch (error) {
+    console.error('❌ Error getting team PTO requests:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get team PTO requests',
+      data: []
+    };
+  }
+});
+
+// Get Users by Team
+resolver.define('getUsersByTeam', async (req) => {
+  try {
+    const { teamId } = req.payload || {};
+    const users = await storage.get('users') || [];
+    
+    if (!teamId) {
+      return {
+        success: true,
+        data: []
+      };
+    }
+    
+    const teamUsers = users.filter(user => {
+      if (user.team_memberships && Array.isArray(user.team_memberships)) {
+        return user.team_memberships.some(membership => membership.team_id === teamId);
+      }
+      return user.team_id === teamId;
+    });
+    
+    return {
+      success: true,
+      data: teamUsers
+    };
+  } catch (error) {
+    console.error('❌ Error getting users by team:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get team users',
+      data: []
+    };
+  }
+});
+
+// Submit PTO for User (Admin function)
 resolver.define('submitPTOForUser', async (req) => {
   try {
     const { requestData, submittedBy } = req.payload;
@@ -1232,93 +1516,55 @@ resolver.define('submitPTOForUser', async (req) => {
         sum + (schedule.type === 'FULL_DAY' ? 1 : 0.5), 0
       );
       totalHours = requestData.daily_schedules.reduce((sum, schedule) => 
-        sum + (schedule.type === 'FULL_DAY' ? 8 : 4), 0
+        sum + (schedule.hours || (schedule.type === 'FULL_DAY' ? 8 : 4)), 0
       );
-    } else {
-      // Calculate based on date range (business days only)
-      const start = new Date(requestData.start_date);
-      const end = new Date(requestData.end_date);
-      let businessDays = 0;
-      
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const dayOfWeek = d.getDay();
-        if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not Sunday or Saturday
-          businessDays++;
-        }
-      }
-      
-      totalDays = totalDays || businessDays;
-      totalHours = totalHours || (businessDays * 8);
     }
     
-    // Get existing requests to check for conflicts
-    const existingRequests = await storage.get('pto_requests') || [];
+    const ptoRequests = await storage.get('pto_requests') || [];
     
-    // Check for conflicts (only if this is a new request, not an import override)
-    if (!requestData.import_source) {
-      const conflictingRequests = existingRequests.filter(request => 
-        request.requester_id === requestData.requester_id &&
-        request.status !== 'declined' &&
-        !(new Date(requestData.end_date) < new Date(request.start_date) || 
-          new Date(requestData.start_date) > new Date(request.end_date))
-      );
-      
-      if (conflictingRequests.length > 0) {
-        throw new Error('This request conflicts with existing PTO requests for the same dates');
-      }
-    }
-    
-    // Create new request with admin privileges
     const newRequest = {
-      id: `pto-admin-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `pto-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       requester_id: requestData.requester_id,
-      requester_name: requestData.requester_name,
-      requester_email: requestData.requester_email,
-      requester_avatar: requestData.requester_avatar,
+      requester_name: requestData.requester_name || 'Unknown User',
+      requester_email: requestData.requester_email || '',
       manager_id: requestData.manager_id,
-      manager_name: requestData.manager_name,
-      manager_email: requestData.manager_email,
+      manager_name: requestData.manager_name || '',
+      manager_email: requestData.manager_email || '',
       start_date: requestData.start_date,
       end_date: requestData.end_date,
-      leave_type: requestData.leave_type,
-      reason: requestData.reason,
-      status: requestData.status || 'approved', // Admin can directly approve
-      total_days: totalDays,
-      total_hours: totalHours,
+      total_days: totalDays || 0,
+      total_hours: totalHours || 0,
+      reason: requestData.reason || 'Admin submitted request',
+      status: 'approved', // Admin submissions are auto-approved
       submitted_at: new Date().toISOString(),
       reviewed_at: new Date().toISOString(),
-      reviewer_comments: requestData.reviewer_comments || 'Created by admin',
-      submitted_by_admin: true,
-      admin_id: submittedBy,
-      daily_schedules: requestData.daily_schedules || [],
-      import_source: requestData.import_source || null,
-      imported_by: requestData.imported_by || null,
+      reviewed_by: submittedBy,
+      comments: 'Submitted by admin',
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      submitted_by_admin: true
     };
     
-    // Add to storage
-    existingRequests.push(newRequest);
-    await storage.set('pto_requests', existingRequests);
+    ptoRequests.push(newRequest);
+    await storage.set('pto_requests', ptoRequests);
     
-    // Create daily schedule records if provided
+    // Handle daily schedules if provided
     if (requestData.daily_schedules && requestData.daily_schedules.length > 0) {
-      const dailyScheduleRecords = await storage.get('pto_daily_schedules') || [];
+      const dailySchedules = await storage.get('pto_daily_schedules') || [];
       
-      for (const schedule of requestData.daily_schedules) {
-        const scheduleRecord = {
-          id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          pto_request_id: newRequest.id,
-          date: schedule.date,
-          schedule_type: schedule.type,
-          leave_type: schedule.leaveType,
-          hours: schedule.type === 'FULL_DAY' ? 8 : 4,
-          created_at: new Date().toISOString()
-        };
-        dailyScheduleRecords.push(scheduleRecord);
-      }
+      const dailyScheduleRecords = requestData.daily_schedules.map(schedule => ({
+        id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        request_id: newRequest.id,
+        date: schedule.date,
+        type: schedule.type,
+        leave_type: schedule.leaveType || 'vacation',
+        hours: schedule.hours || (schedule.type === 'FULL_DAY' ? 8 : 4),
+        requester_id: requestData.requester_id,
+        created_at: new Date().toISOString()
+      }));
       
-      await storage.set('pto_daily_schedules', dailyScheduleRecords);
+      dailySchedules.push(...dailyScheduleRecords);
+      await storage.set('pto_daily_schedules', dailySchedules);
     }
     
     console.log('✅ Admin PTO request created:', newRequest.id);
@@ -1336,437 +1582,325 @@ resolver.define('submitPTOForUser', async (req) => {
     };
   }
 });
-resolver.define('getUserTeams', async (req) => {
+
+// Add Team Member
+resolver.define('addTeamMember', async (req) => {
   try {
-    const { userId } = req.payload || {};
-    const result = await teamUserService.getUserTeams(userId);
-    return result;
-  } catch (error) {
-    console.error('❌ Error in getUserTeams resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to get user teams'
-    };
-  }
-});
-resolver.define('getTeamAnalytics', async (req) => {
-  try {
-    const { teamId, dateRange } = req.payload || {};
-    const result = await teamUserService.getTeamAnalytics(teamId, dateRange);
-    return result;
-  } catch (error) {
-    console.error('❌ Error in getTeamAnalytics resolver:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to get team analytics'
-    };
-  }
-});
-// Initialize PTO Database with Team Management
-resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
-  try {
-    console.log('🔧 Initializing PTO Database with Team Management...');
-    
-    // First initialize the basic database
-    const basicInit = await resolver.resolve('initializePTODatabase', req);
-    if (!basicInit.success) {
-      return basicInit;
-    }
-    
-    // Initialize team management specific tables
-    const teamTables = ['pto_teams', 'team_members', 'admin_users'];
-    
-    for (const table of teamTables) {
-      try {
-        const existing = await storage.get(table);
-        if (!existing) {
-          await storage.set(table, []);
-          console.log(`✅ Initialized team table: ${table}`);
-        }
-      } catch (storageError) {
-        console.error(`❌ Error initializing team table ${table}:`, storageError);
-      }
-    }
-    
-    return {
-      success: true,
-      message: 'PTO Database with Team Management initialized successfully',
-      data: {
-        basicInit: true,
-        teamManagement: true
-      }
-    };
-  } catch (error) {
-    console.error('❌ Team management initialization failed:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-resolver.define('debugStorage', async (req) => {
-  try {
-    console.log('🔍 Debugging storage state');
-    
+    const { teamId, member } = req.payload || {};
     const users = await storage.get('users') || [];
-    const teams = await storage.get('teams') || [];
-    const admins = await storage.get('pto_admins') || [];
-    const ptoRequests = await storage.get('pto_requests') || [];
     
-    // ADD: Check both chunked and direct storage for daily schedules
-    let ptoDailySchedules = [];
-    try {
-      ptoDailySchedules = await importService.getChunkedData('pto_daily_schedules') || [];
-      console.log('📦 Loaded daily schedules from chunked storage:', ptoDailySchedules.length);
-    } catch (chunkError) {
-      console.warn('⚠️ Could not load chunked daily schedules, trying direct storage:', chunkError.message);
-      ptoDailySchedules = await storage.get('pto_daily_schedules') || [];
-      console.log('📦 Loaded daily schedules from direct storage:', ptoDailySchedules.length);
+    const userIndex = users.findIndex(u => 
+      u.id === member.user_id || u.jira_account_id === member.user_id
+    );
+    
+    if (userIndex === -1) {
+      throw new Error('User not found');
     }
     
-    console.log(`Users in storage: ${users.length}`);
-    console.log(`Teams in storage: ${teams.length}`);
-    console.log(`Admins in storage: ${admins.length}`);
-    console.log(`PTO Requests in storage: ${ptoRequests.length}`);
-    console.log(`PTO Daily Schedules in storage: ${ptoDailySchedules.length}`);
-    
-    // ADD: Sample daily schedule data for debugging
-    if (ptoDailySchedules.length > 0) {
-      console.log('Sample daily schedule:', ptoDailySchedules[0]);
+    // Initialize team_memberships if it doesn't exist
+    if (!users[userIndex].team_memberships) {
+      users[userIndex].team_memberships = [];
     }
+    
+    // Check if user is already a member of this team
+    const existingMembership = users[userIndex].team_memberships.find(
+      membership => membership.team_id === teamId
+    );
+    
+    if (existingMembership) {
+      // Update existing membership
+      existingMembership.role = member.role || 'Member';
+      existingMembership.updated_at = new Date().toISOString();
+    } else {
+      // Add new membership
+      users[userIndex].team_memberships.push({
+        team_id: teamId,
+        role: member.role || 'Member',
+        joined_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+    }
+    
+    users[userIndex].updated_at = new Date().toISOString();
+    await storage.set('users', users);
     
     return {
       success: true,
-      data: {
-        users,
-        teams,
-        admins,
-        pto_requests: ptoRequests,
-        pto_daily_schedules: ptoDailySchedules,
-        summary: {
-          userCount: users.length,
-          teamCount: teams.length,
-          adminCount: admins.length,
-          ptoRequestCount: ptoRequests.length,
-          ptoScheduleCount: ptoDailySchedules.length
-        }
-      }
+      data: users[userIndex],
+      message: 'Team member added successfully'
     };
   } catch (error) {
-    console.error('❌ Error debugging storage:', error);
+    console.error('❌ Error adding team member:', error);
     return {
       success: false,
-      message: error.message
+      message: error.message || 'Failed to add team member'
     };
   }
 });
-resolver.define('cleanupPTODatabase', async (req) => {
+
+// Remove Team Member
+resolver.define('removeTeamMember', async (req) => {
   try {
-    const { adminId, confirmDelete } = req.payload || {};
+    const { teamId, memberAccountId } = req.payload || {};
+    const users = await storage.get('users') || [];
     
-    // Verify admin status
+    const userIndex = users.findIndex(u => 
+      u.id === memberAccountId || u.jira_account_id === memberAccountId
+    );
+    
+    if (userIndex === -1) {
+      throw new Error('User not found');
+    }
+    
+    // Remove team membership
+    if (users[userIndex].team_memberships) {
+      users[userIndex].team_memberships = users[userIndex].team_memberships.filter(
+        membership => membership.team_id !== teamId
+      );
+    }
+    
+    users[userIndex].updated_at = new Date().toISOString();
+    await storage.set('users', users);
+    
+    return {
+      success: true,
+      data: users[userIndex],
+      message: 'Team member removed successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error removing team member:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to remove team member'
+    };
+  }
+});
+// Clear Import Validation Data
+resolver.define('clearImportValidationData', async (req) => {
+  try {
+    console.log('🧹 Clearing import validation data');
+    
+    // Keys that might contain validation data
+    const validationKeys = [
+      'temp_import_validation',
+      'temp_import_data',
+      'temp_validation_data',
+      'import_validation_cache',
+      'temp_import_status',
+      'validation_progress',
+      'import_progress'
+    ];
+    
+    let deletedCount = 0;
+    
+    for (const key of validationKeys) {
+      try {
+        await storage.delete(key);
+        deletedCount++;
+        console.log(`✅ Cleared: ${key}`);
+      } catch (error) {
+        // Ignore "not found" errors
+        if (!error.message.includes('not found') && !error.message.includes('does not exist')) {
+          console.warn(`⚠️ Issue clearing ${key}:`, error.message);
+        }
+      }
+    }
+    
+    console.log(`✅ Cleared ${deletedCount} validation entries`);
+    
+    return {
+      success: true,
+      deletedCount: deletedCount,
+      message: 'Import validation data cleared successfully'
+    };
+  } catch (error) {
+    console.error('❌ Error clearing validation data:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to clear validation data'
+    };
+  }
+});
+
+// Validate Import Data
+resolver.define('validatePTOImportData', async (req) => {
+  try {
+    const { importData, adminId, checkJiraUsers = true, batchIndex = 0, batchSize = 50 } = req.payload;
+    
+    // Admin verification
     const admins = await storage.get('pto_admins') || [];
     if (!admins.includes(adminId)) {
       throw new Error('Unauthorized: Admin privileges required');
     }
     
-    if (!confirmDelete) {
-      throw new Error('Confirmation required for cleanup');
-    }
+    console.log(`🔍 CHUNKED: Validating batch ${batchIndex} (${importData.length} records)`);
     
-    console.log('🗑️ CLEANUP: Starting PTO database cleanup by admin:', adminId);
-    
-    let deletedCount = 0;
-    const cleanupLog = [];
-    
-    // Clean up regular PTO requests
-    try {
-      const ptoRequests = await storage.get('pto_requests') || [];
-      if (ptoRequests.length > 0) {
-        await storage.set('pto_requests', []);
-        deletedCount += ptoRequests.length;
-        cleanupLog.push(`Deleted ${ptoRequests.length} PTO requests`);
-        console.log(`✅ Deleted ${ptoRequests.length} PTO requests`);
-      }
-    } catch (error) {
-      console.warn('⚠️ Could not clean PTO requests:', error.message);
-      cleanupLog.push(`Failed to clean PTO requests: ${error.message}`);
-    }
-    
-    // Clean up daily schedules (chunked storage)
-    try {
-      const dailySchedules = await importService.getChunkedData('pto_daily_schedules') || [];
-      if (dailySchedules.length > 0) {
-        // Delete chunked data
-        await importService.deleteChunkedData('pto_daily_schedules');
-        // Also clear direct storage
-        await storage.set('pto_daily_schedules', []);
-        
-        deletedCount += dailySchedules.length;
-        cleanupLog.push(`Deleted ${dailySchedules.length} daily schedules (chunked)`);
-        console.log(`✅ Deleted ${dailySchedules.length} daily schedules`);
-      }
-    } catch (error) {
-      console.warn('⚠️ Could not clean daily schedules:', error.message);
-      cleanupLog.push(`Failed to clean daily schedules: ${error.message}`);
+    // For first batch, do complete validation setup
+    if (batchIndex === 0 && Array.isArray(importData) && importData.length > 0) {
       
-      // Try direct storage cleanup
-      try {
-        const directSchedules = await storage.get('pto_daily_schedules') || [];
-        if (directSchedules.length > 0) {
-          await storage.set('pto_daily_schedules', []);
-          deletedCount += directSchedules.length;
-          cleanupLog.push(`Deleted ${directSchedules.length} daily schedules (direct)`);
+      // STEP 1: Basic format validation (fast)
+      console.log('📋 Step 1: Basic format validation...');
+      const basicValidation = await importService.validateImportData(importData, false);
+      if (!basicValidation.valid) {
+        return {
+          success: false,
+          data: {
+            validation: basicValidation,
+            isComplete: true
+          },
+          message: `Basic validation failed: ${basicValidation.errors.length} format errors`
+        };
+      }
+      
+      // STEP 2: User database lookup (optimized)
+      console.log('👥 Step 2: User database validation...');
+      const users = await storage.get('users') || [];
+      
+      if (users.length === 0) {
+        return {
+          success: false,
+          message: 'User database is empty. Please import users from Jira first.',
+          data: { validation: { errors: ['No users in database'] }, isComplete: true }
+        };
+      }
+      
+      console.log(`📋 Found ${users.length} users in database for validation`);
+      
+      // Create email lookup map
+      const emailToUserMap = {};
+      users.forEach(user => {
+        const email = (user.email_address || user.emailAddress || '').toLowerCase();
+        if (email) {
+          emailToUserMap[email] = {
+            accountId: user.jira_account_id || user.accountId || user.id,
+            displayName: user.display_name || user.displayName || user.name,
+            emailAddress: user.email_address || user.emailAddress
+          };
         }
-      } catch (directError) {
-        console.warn('⚠️ Could not clean direct daily schedules:', directError.message);
+      });
+      
+      console.log(`📋 Created email lookup map with ${Object.keys(emailToUserMap).length} entries`);
+      
+      // STEP 3: Enhanced validation with user data
+      console.log('🔄 Step 3: Enhanced validation with user lookup...');
+      const enhancedRecords = [];
+      const finalErrors = [];
+      
+      for (let i = 0; i < basicValidation.validRecords.length; i++) {
+        const record = basicValidation.validRecords[i];
+        
+        // Look up requester in your database
+        const requesterEmail = record.requester_email.toLowerCase();
+        const requester = emailToUserMap[requesterEmail];
+        if (!requester) {
+          finalErrors.push({
+            record: i + 1,
+            errors: [`Requester not found in user database: ${record.requester_email}`],
+            data: record
+          });
+          continue;
+        }
+        
+        // Look up manager in your database
+        const managerEmail = record.manager_email.toLowerCase();
+        const manager = emailToUserMap[managerEmail];
+        if (!manager) {
+          finalErrors.push({
+            record: i + 1,
+            errors: [`Manager not found in user database: ${record.manager_email}`],
+            data: record
+          });
+          continue;
+        }
+        
+        // Create import-ready record with all required fields
+        enhancedRecords.push({
+          ...record,
+          // Enhanced with user data from YOUR database
+          requester_id: requester.accountId,
+          requester_name: requester.displayName,
+          requester_email: requester.emailAddress,
+          manager_id: manager.accountId,
+          manager_name: manager.displayName,
+          manager_email: manager.emailAddress,
+          // Import metadata
+          import_source: 'csv_bulk_import',
+          import_timestamp: new Date().toISOString(),
+          hours: record.hours || (record.schedule_type === 'HALF_DAY' ? 4 : 8),
+          // Keep originals for reference
+          original_requester_email: record.requester_email,
+          original_manager_email: record.manager_email
+        });
       }
+      
+      console.log(`✅ Enhanced validation complete: ${enhancedRecords.length} ready, ${finalErrors.length} errors`);
+      
+      // Store validated data using CHUNKED storage to handle large datasets
+      const validationKey = `pto_import_validation_${adminId}`;
+      const validationData = {
+        validRecords: enhancedRecords,
+        preparedForImport: true,
+        timestamp: new Date().toISOString(),
+        totalRecords: importData.length,
+        errors: finalErrors
+      };
+
+      let storeResult;
+      try {
+        // Use chunked storage for large datasets
+        storeResult = await importService.storeChunkedData(validationKey, validationData);
+        console.log(`✅ Stored validation data: ${storeResult.chunks} chunks, ${storeResult.totalSize} chars`);
+      } catch (storageError) {
+        console.error('❌ Failed to store validation data:', storageError);
+        return {
+          success: false,
+          message: `Failed to store validation data: ${storageError.message}. Dataset may be too large.`,
+          data: { validation: { errors: [storageError.message] }, isComplete: true }
+        };
+      }
+      
+      console.log(`✅ CHUNKED Validation complete: ${enhancedRecords.length} ready, ${finalErrors.length} errors`);
+      
+      return {
+        success: true,
+        data: {
+          isComplete: true,
+          validationComplete: true,
+          validation: {
+            totalRecords: importData.length,
+            validRecords: enhancedRecords.slice(0, 5), // Show fewer for preview
+            validRecordsCount: enhancedRecords.length, // This is the key fix
+            invalidRecords: finalErrors.length,
+            errors: finalErrors.slice(0, 10), // Fewer errors for faster display
+            chunkedStorage: true,
+            chunks: storeResult ? storeResult.chunks : 1
+          }
+        },
+        message: `Database validation complete: ${enhancedRecords.length} of ${importData.length} records ready for import`
+      };
     }
     
-    // Clean up PTO balances
-    try {
-      const ptoBalances = await storage.get('pto_balances') || [];
-      if (ptoBalances.length > 0) {
-        await storage.set('pto_balances', []);
-        deletedCount += ptoBalances.length;
-        cleanupLog.push(`Deleted ${ptoBalances.length} PTO balances`);
-        console.log(`✅ Deleted ${ptoBalances.length} PTO balances`);
-      }
-    } catch (error) {
-      console.warn('⚠️ Could not clean PTO balances:', error.message);
-      cleanupLog.push(`Failed to clean PTO balances: ${error.message}`);
-    }
-    
-    // Clean up any remaining validation data
-    try {
-      await importService.clearValidationData();
-      cleanupLog.push('Cleared validation data');
-    } catch (error) {
-      console.warn('⚠️ Could not clear validation data:', error.message);
-    }
-    
-    // Log the cleanup activity
-    const adminLog = await storage.get('pto_admin_log') || [];
-    adminLog.push({
-      action: 'PTO_DATABASE_CLEANUP',
-      admin_id: adminId,
-      timestamp: new Date().toISOString(),
-      details: {
-        deletedCount,
-        cleanupLog
-      }
-    });
-    await storage.set('pto_admin_log', adminLog);
-    
-    console.log(`🎉 CLEANUP COMPLETE: ${deletedCount} items deleted`);
-    
+    // For non-zero batch index, return stored progress
     return {
       success: true,
       data: {
-        deletedCount,
-        cleanupLog
+        isComplete: false,
+        currentBatch: batchIndex,
+        totalBatches: Math.ceil(importData.length / batchSize)
       },
-      message: `Successfully cleaned up PTO database: ${deletedCount} items deleted`
+      message: 'Batch validation in progress...'
     };
     
   } catch (error) {
-    console.error('❌ Error cleaning up PTO database:', error);
+    console.error('❌ Validation error:', error);
     return {
       success: false,
-      message: error.message || 'Failed to cleanup PTO database'
-    };
-  }
-});
-// not being used:
-resolver.define('adminEditPTORequest', async (req) => {
-  try {
-    const { requestId, updatedData, adminId } = req.payload || {};
-    console.log(`👑 Admin editing PTO request ${requestId}`);
-    
-    if (!requestId) {
-      throw new Error('Request ID is required');
-    }
-    
-    const requests = await storage.get('pto_requests') || [];
-    const requestIndex = requests.findIndex(r => r.id === requestId);
-    
-    if (requestIndex === -1) {
-      throw new Error('PTO request not found');
-    }
-    
-    const existingRequest = requests[requestIndex];
-    
-    // Calculate new totals if daily schedules are provided
-    let totalDays = updatedData.totalDays;
-    let totalHours = updatedData.totalHours;
-    
-    if (updatedData.dailySchedules && updatedData.dailySchedules.length > 0) {
-      totalDays = updatedData.dailySchedules.reduce((sum, schedule) => 
-        sum + (schedule.type === 'FULL_DAY' ? 1 : 0.5), 0
-      );
-      totalHours = updatedData.dailySchedules.reduce((sum, schedule) => 
-        sum + (schedule.type === 'FULL_DAY' ? 8 : 4), 0
-      );
-    }
-    
-    // Update the request
-    requests[requestIndex] = {
-      ...existingRequest,
-      ...updatedData,
-      total_days: totalDays || existingRequest.total_days,
-      total_hours: totalHours || existingRequest.total_hours,
-      updated_at: new Date().toISOString(),
-      last_edited_by: adminId,
-      last_edited_at: new Date().toISOString(),
-      edit_history: [
-        ...(existingRequest.edit_history || []),
-        {
-          edited_at: new Date().toISOString(),
-          edited_by: adminId,
-          is_admin_edit: true,
-          previous_data: {
-            start_date: existingRequest.start_date,
-            end_date: existingRequest.end_date,
-            reason: existingRequest.reason,
-            status: existingRequest.status,
-            total_days: existingRequest.total_days
-          }
-        }
-      ]
-    };
-    
-    await storage.set('pto_requests', requests);
-    
-    // Update daily schedules if provided
-    if (updatedData.dailySchedules) {
-      const allSchedules = await storage.get('pto_daily_schedules') || [];
-      const filteredSchedules = allSchedules.filter(s => s.pto_request_id !== requestId);
-      
-      const newSchedules = updatedData.dailySchedules.map(schedule => ({
-        id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        pto_request_id: requestId,
-        date: schedule.date,
-        schedule_type: schedule.type,
-        leave_type: schedule.leaveType,
-        hours: schedule.type === 'FULL_DAY' ? 8 : 4,
-        requester_id: existingRequest.requester_id,
-        requester_name: existingRequest.requester_name,
-        requester_email: existingRequest.requester_email,
-        manager_id: existingRequest.manager_id,
-        manager_name: existingRequest.manager_name,
-        manager_email: existingRequest.manager_email,
-        created_at: new Date().toISOString()
-      }));
-      
-      await storage.set('pto_daily_schedules', [...filteredSchedules, ...newSchedules]);
-    }
-    
-    return {
-      success: true,
-      data: requests[requestIndex],
-      message: 'PTO request updated successfully by admin'
-    };
-  } catch (error) {
-    console.error('❌ Error in admin edit PTO request:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to edit PTO request'
+      message: 'Validation failed: ' + error.message,
+      data: { validation: { errors: [error.message] }, isComplete: true }
     };
   }
 });
 
-
-resolver.define('adminDeletePTORequest', async (req) => {
-  try {
-    const { requestId, adminId, reason } = req.payload || {};
-    console.log(`👑 Admin deleting PTO request ${requestId}`);
-    
-    if (!requestId) {
-      throw new Error('Request ID is required');
-    }
-    
-    const requests = await storage.get('pto_requests') || [];
-    const requestIndex = requests.findIndex(r => r.id === requestId);
-    
-    if (requestIndex === -1) {
-      throw new Error('PTO request not found');
-    }
-    
-    const deletedRequest = requests[requestIndex];
-    
-    // Remove the request
-    requests.splice(requestIndex, 1);
-    await storage.set('pto_requests', requests);
-    
-    // Remove associated daily schedules
-    const dailySchedules = await storage.get('pto_daily_schedules') || [];
-    const filteredSchedules = dailySchedules.filter(s => s.pto_request_id !== requestId);
-    await storage.set('pto_daily_schedules', filteredSchedules);
-    
-    // Log the deletion
-    const deleteLog = await storage.get('pto_delete_log') || [];
-    deleteLog.push({
-      request_id: requestId,
-      original_request: deletedRequest,
-      deleted_by: adminId,
-      is_admin_delete: true,
-      deletion_reason: reason || 'Admin deleted',
-      deleted_at: new Date().toISOString()
-    });
-    await storage.set('pto_delete_log', deleteLog);
-    
-    return {
-      success: true,
-      message: 'PTO request deleted successfully by admin'
-    };
-  } catch (error) {
-    console.error('❌ Error in admin delete PTO request:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to delete PTO request'
-    };
-  }
-});
-resolver.define('exportPTODailySchedules', async (req) => {
-  try {
-    const { filters } = req.payload || {};
-    console.log('📤 Exporting PTO daily schedules');
-
-    let schedules = await storage.get('pto_daily_schedules') || [];
-
-    // Apply filters if provided
-    if (filters) {
-      if (filters.startDate) {
-        schedules = schedules.filter(s => s.date >= filters.startDate);
-      }
-      if (filters.endDate) {
-        schedules = schedules.filter(s => s.date <= filters.endDate);
-      }
-      if (filters.requesterId) {
-        schedules = schedules.filter(s => s.requester_id === filters.requesterId);
-      }
-      if (filters.managerId) {
-        schedules = schedules.filter(s => s.manager_id === filters.managerId);
-      }
-      if (filters.leaveType) {
-        schedules = schedules.filter(s => s.leave_type === filters.leaveType);
-      }
-    }
-
-    return {
-      success: true,
-      data: schedules,
-      message: `Exported ${schedules.length} daily schedules`
-    };
-  } catch (error) {
-    console.error('❌ Error exporting PTO daily schedules:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to export PTO daily schedules'
-    };
-  }
-});
-// Import PTO Daily Schedules from CSV - CHUNKED VERSION
 resolver.define('importPTODailySchedules', async (req) => {
   const timeoutPromise = new Promise((_, reject) => {
     setTimeout(() => reject(new Error('Import timeout after 45 seconds')), 45000); // Increased timeout
@@ -2055,222 +2189,75 @@ resolver.define('importPTODailySchedules', async (req) => {
     throw error;
   }
 });
-// Check PTO Import Status - not being used:
-resolver.define('checkPTOImportStatus', async (req) => {
+
+
+// Edit PTO Request
+resolver.define('editPTORequest', async (req) => {
   try {
-    const { adminId } = req.payload || {};
-    console.log('🔍 Checking PTO import status');
+    const { requestId, updatedData, editedBy } = req.payload || {};
+    const requests = await storage.get('pto_requests') || [];
     
-    // Verify admin status
-    const admins = await storage.get('pto_admins') || [];
-    if (!admins.includes(adminId)) {
-      throw new Error('Unauthorized: Admin privileges required');
+    const requestIndex = requests.findIndex(r => r.id === requestId);
+    if (requestIndex === -1) {
+      throw new Error('PTO request not found');
     }
     
-    // Get import logs from admin log
-    const adminLog = await storage.get('pto_admin_log') || [];
-    const importLogs = adminLog.filter(log => log.action === 'PTO_DAILY_SCHEDULES_IMPORT');
+    const existingRequest = requests[requestIndex];
     
-    // Get imported daily schedules
-    const dailySchedules = await storage.get('pto_daily_schedules') || [];
-    const importedSchedules = dailySchedules.filter(schedule => schedule.imported === true);
+    // Only allow editing of pending requests
+    if (existingRequest.status !== 'pending') {
+      throw new Error('Can only edit pending requests');
+    }
+    
+    // Update the request
+    requests[requestIndex] = {
+      ...existingRequest,
+      ...updatedData,
+      status: 'pending', // Reset to pending after edit
+      updated_at: new Date().toISOString(),
+      edited_by: editedBy,
+      edited_at: new Date().toISOString()
+    };
+    
+    await storage.set('pto_requests', requests);
+    
+    // Update daily schedules if provided
+    if (updatedData.daily_schedules) {
+      const dailySchedules = await storage.get('pto_daily_schedules') || [];
+      
+      // Remove old schedules for this request
+      const filteredSchedules = dailySchedules.filter(s => s.request_id !== requestId);
+      
+      // Add new schedules
+      const newSchedules = updatedData.daily_schedules.map(schedule => ({
+        id: `schedule-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        request_id: requestId,
+        date: schedule.date,
+        type: schedule.type,
+        leave_type: schedule.leaveType || 'vacation',
+        hours: schedule.hours || (schedule.type === 'FULL_DAY' ? 8 : 4),
+        requester_id: existingRequest.requester_id,
+        created_at: new Date().toISOString()
+      }));
+      
+      await storage.set('pto_daily_schedules', [...filteredSchedules, ...newSchedules]);
+    }
     
     return {
       success: true,
-      data: {
-        importLogs,
-        importedSchedulesCount: importedSchedules.length,
-        lastImport: importLogs.length > 0 ? importLogs[importLogs.length - 1] : null
-      },
-      message: `Found ${importLogs.length} import logs and ${importedSchedules.length} imported schedules`
+      data: requests[requestIndex],
+      message: 'PTO request updated successfully and resubmitted for approval'
     };
   } catch (error) {
-    console.error('❌ Error checking PTO import status:', error);
+    console.error('❌ Error editing PTO request:', error);
     return {
       success: false,
-      message: error.message || 'Failed to check PTO import status',
-      error: error.toString()
+      message: error.message || 'Failed to edit PTO request'
     };
   }
 });
 
-resolver.define('validatePTOImportData', async (req) => {
-  try {
-    const { importData, adminId, checkJiraUsers = true, batchIndex = 0, batchSize = 50 } = req.payload;
-    
-    // Admin verification
-    const admins = await storage.get('pto_admins') || [];
-    if (!admins.includes(adminId)) {
-      throw new Error('Unauthorized: Admin privileges required');
-    }
-    
-    console.log(`🔍 CHUNKED: Validating batch ${batchIndex} (${importData.length} records)`);
-    
-    // For first batch, do complete validation setup
-    if (batchIndex === 0 && Array.isArray(importData) && importData.length > 0) {
-      
-      // STEP 1: Basic format validation (fast)
-      console.log('📋 Step 1: Basic format validation...');
-      const basicValidation = await importService.validateImportData(importData, false);
-      if (!basicValidation.valid) {
-        return {
-          success: false,
-          data: {
-            validation: basicValidation,
-            isComplete: true
-          },
-          message: `Basic validation failed: ${basicValidation.errors.length} format errors`
-        };
-      }
-      
-      // STEP 2: User database lookup (optimized)
-      console.log('👥 Step 2: User database validation...');
-      const users = await storage.get('users') || [];
-      
-      if (users.length === 0) {
-        return {
-          success: false,
-          message: 'User database is empty. Please import users from Jira first.',
-          data: { validation: { errors: ['No users in database'] }, isComplete: true }
-        };
-      }
-      
-      console.log(`📋 Found ${users.length} users in database for validation`);
-      
-      // Create email lookup map
-      const emailToUserMap = {};
-      users.forEach(user => {
-        const email = (user.email_address || user.emailAddress || '').toLowerCase();
-        if (email) {
-          emailToUserMap[email] = {
-            accountId: user.jira_account_id || user.accountId || user.id,
-            displayName: user.display_name || user.displayName || user.name,
-            emailAddress: user.email_address || user.emailAddress
-          };
-        }
-      });
-      
-      console.log(`📋 Created email lookup map with ${Object.keys(emailToUserMap).length} entries`);
-      
-      // STEP 3: Enhanced validation with user data
-      console.log('🔄 Step 3: Enhanced validation with user lookup...');
-      const enhancedRecords = [];
-      const finalErrors = [];
-      
-      for (let i = 0; i < basicValidation.validRecords.length; i++) {
-        const record = basicValidation.validRecords[i];
-        
-        // Look up requester in your database
-        const requesterEmail = record.requester_email.toLowerCase();
-        const requester = emailToUserMap[requesterEmail];
-        if (!requester) {
-          finalErrors.push({
-            record: i + 1,
-            errors: [`Requester not found in user database: ${record.requester_email}`],
-            data: record
-          });
-          continue;
-        }
-        
-        // Look up manager in your database
-        const managerEmail = record.manager_email.toLowerCase();
-        const manager = emailToUserMap[managerEmail];
-        if (!manager) {
-          finalErrors.push({
-            record: i + 1,
-            errors: [`Manager not found in user database: ${record.manager_email}`],
-            data: record
-          });
-          continue;
-        }
-        
-        // Create import-ready record with all required fields
-        enhancedRecords.push({
-          ...record,
-          // Enhanced with user data from YOUR database
-          requester_id: requester.accountId,
-          requester_name: requester.displayName,
-          requester_email: requester.emailAddress,
-          manager_id: manager.accountId,
-          manager_name: manager.displayName,
-          manager_email: manager.emailAddress,
-          // Import metadata
-          import_source: 'csv_bulk_import',
-          import_timestamp: new Date().toISOString(),
-          hours: record.hours || (record.schedule_type === 'HALF_DAY' ? 4 : 8),
-          // Keep originals for reference
-          original_requester_email: record.requester_email,
-          original_manager_email: record.manager_email
-        });
-      }
-      
-      console.log(`✅ Enhanced validation complete: ${enhancedRecords.length} ready, ${finalErrors.length} errors`);
-      
-      // Store validated data using CHUNKED storage to handle large datasets
-      const validationKey = `pto_import_validation_${adminId}`;
-      const validationData = {
-        validRecords: enhancedRecords,
-        preparedForImport: true,
-        timestamp: new Date().toISOString(),
-        totalRecords: importData.length,
-        errors: finalErrors
-      };
-
-      let storeResult;
-      try {
-        // Use chunked storage for large datasets
-        storeResult = await importService.storeChunkedData(validationKey, validationData);
-        console.log(`✅ Stored validation data: ${storeResult.chunks} chunks, ${storeResult.totalSize} chars`);
-      } catch (storageError) {
-        console.error('❌ Failed to store validation data:', storageError);
-        return {
-          success: false,
-          message: `Failed to store validation data: ${storageError.message}. Dataset may be too large.`,
-          data: { validation: { errors: [storageError.message] }, isComplete: true }
-        };
-      }
-      
-      console.log(`✅ CHUNKED Validation complete: ${enhancedRecords.length} ready, ${finalErrors.length} errors`);
-      
-      return {
-        success: true,
-        data: {
-          isComplete: true,
-          validationComplete: true,
-          validation: {
-            totalRecords: importData.length,
-            validRecords: enhancedRecords.slice(0, 5), // Show fewer for preview
-            validRecordsCount: enhancedRecords.length, // This is the key fix
-            invalidRecords: finalErrors.length,
-            errors: finalErrors.slice(0, 10), // Fewer errors for faster display
-            chunkedStorage: true,
-            chunks: storeResult ? storeResult.chunks : 1
-          }
-        },
-        message: `Database validation complete: ${enhancedRecords.length} of ${importData.length} records ready for import`
-      };
-    }
-    
-    // For non-zero batch index, return stored progress
-    return {
-      success: true,
-      data: {
-        isComplete: false,
-        currentBatch: batchIndex,
-        totalBatches: Math.ceil(importData.length / batchSize)
-      },
-      message: 'Batch validation in progress...'
-    };
-    
-  } catch (error) {
-    console.error('❌ Validation error:', error);
-    return {
-      success: false,
-      message: 'Validation failed: ' + error.message,
-      data: { validation: { errors: [error.message] }, isComplete: true }
-    };
-  }
-});
+// Debug User Emails
 resolver.define('debugUserEmails', async (req) => {
   try {
     const { searchEmail } = req.payload || {};
@@ -2327,274 +2314,212 @@ resolver.define('debugUserEmails', async (req) => {
     };
   }
 });
-// Clear import validation data - CHUNKED VERSION
-resolver.define('clearImportValidationData', async (req) => {
-  try {
-    const { adminId } = req.payload || {};
-    
-    // Check if we recently cleaned for this admin (within 30 seconds)
-    const cacheKey = `cleanup_${adminId}`;
-    const lastCleanup = cleanupCache.get(cacheKey);
-    const now = Date.now();
-    
-    if (lastCleanup && (now - lastCleanup) < 30000) {
-      console.log('🚫 Skipping cleanup - too recent');
-      return {
-        success: true,
-        message: 'Cleanup skipped - recently cleaned',
-        data: { deletedCount: 0 }
-      };
-    }
-    
-    console.log('🧹 Proceeding with cleanup, adminId:', adminId);
-    
-    // ... rest of the cleanup logic stays the same ...
-    
-    // Cache the cleanup time
-    cleanupCache.set(cacheKey, now);
-    
-    // Clean old cache entries (keep only last 10 minutes)
-    for (const [key, time] of cleanupCache.entries()) {
-      if (now - time > 600000) { // 10 minutes
-        cleanupCache.delete(key);
-      }
-    }
-    
-    return {
-      success: true,
-      message: totalDeleted > 0 ? `Cleaned ${totalDeleted} entries` : 'No cleanup needed',
-      data: { deletedCount: totalDeleted }
-    };
-    
-  } catch (error) {
-    console.error('❌ Cleanup error:', error);
-    return {
-      success: false,
-      message: 'Cleanup failed: ' + error.message
-    };
-  }
-});
 
-// PTO Balances for current user
-resolver.define('getUserPTOBalances', async (req) => {
-  try {
-    const { accountId } = req.payload || {};
-    if (!accountId) {
-      throw new Error('accountId is required');
-    }
-    const currentYear = new Date().getFullYear();
-    const allBalances = await storage.get('pto_balances') || [];
-    const userBalances = allBalances.filter(b => b.user_id === accountId && b.year === currentYear);
-    // Group by leave type
-    const balancesByType = {};
-    userBalances.forEach(b => {
-      balancesByType[b.leave_type] = {
-        allocated_days: b.allocated_days,
-        used_days: b.used_days,
-        remaining_days: b.remaining_days,
-        year: b.year
-      };
-    });
-    return {
-      success: true,
-      data: balancesByType
-    };
-  } catch (error) {
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
-
+// Delete PTO Balance
 resolver.define('deletePTOBalance', async (req) => {
   try {
     const { user_id, leave_type, year } = req.payload || {};
-    await ptoService.deletePTOBalance({ user_id, leave_type, year });
-    return { success: true };
+    const balances = await storage.get('pto_balances') || [];
+    
+    const filteredBalances = balances.filter(b => 
+      !(b.user_id === user_id && b.leave_type === leave_type && b.year === year)
+    );
+    
+    await storage.set('pto_balances', filteredBalances);
+    
+    return { 
+      success: true,
+      message: 'PTO balance deleted successfully'
+    };
   } catch (error) {
-    return { success: false, message: error.message };
+    return { 
+      success: false, 
+      message: error.message 
+    };
   }
 });
 
+// Import Database
 resolver.define('importDatabase', async (req) => {
   try {
-    const { table, data } = req.payload || {};
-    await ptoService.importDatabase({ table, data });
-    return { success: true };
+    const { data, type } = req.payload || {};
+    console.log(`📥 Importing ${type} data`);
+    
+    if (!data || !Array.isArray(data)) {
+      throw new Error('Invalid data format');
+    }
+    
+    if (type === 'users') {
+      const users = await storage.get('users') || [];
+      const newUsers = data.map(userData => ({
+        id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        ...userData,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        imported: true
+      }));
+      
+      await storage.set('users', [...users, ...newUsers]);
+      
+      return {
+        success: true,
+        data: { imported: newUsers.length },
+        message: `Successfully imported ${newUsers.length} users`
+      };
+    } else if (type === 'teams') {
+      const teams = await storage.get('teams') || [];
+      const newTeams = data.map(teamData => ({
+        id: `team-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        ...teamData,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        imported: true
+      }));
+      
+      await storage.set('teams', [...teams, ...newTeams]);
+      
+      return {
+        success: true,
+        data: { imported: newTeams.length },
+        message: `Successfully imported ${newTeams.length} teams`
+      };
+    }
+    
+    throw new Error('Unsupported import type');
   } catch (error) {
-    return { success: false, message: error.message };
+    console.error('❌ Error importing database:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to import data'
+    };
   }
 });
 
-// Export the resolver handler
-export const handler = resolver.getDefinitions();
-
-// Resource API handler for inter-app communication
-export async function resourceApiHandler(request) {
-  console.log('Resource API request received:', request.payload);
-  
+// Validate Database Import
+resolver.define('validateDatabaseImport', async (req) => {
   try {
-    const { action, params } = JSON.parse(request.payload);
+    const { importData, batchIndex = 0 } = req.payload || {};
+    const batchSize = 100;
     
-    if (!action) {
-      return {
-        statusCode: 400,
-        body: JSON.stringify({
-          success: false,
-          message: 'Action is required'
-        })
+    if (!importData || !Array.isArray(importData)) {
+      throw new Error('Invalid import data format');
+    }
+    
+    console.log(`🔍 Validating database import batch ${batchIndex}`);
+    
+    // Simple validation - just check for required fields
+    const enhancedRecords = importData.map((record, index) => {
+      const enhanced = { ...record };
+      
+      // Add validation flags
+      enhanced._validation = {
+        isValid: true,
+        errors: [],
+        warnings: []
       };
-    }
+      
+      // Basic validation
+      if (record.type === 'user' && !record.display_name) {
+        enhanced._validation.errors.push('Missing display name');
+        enhanced._validation.isValid = false;
+      }
+      
+      if (record.type === 'team' && !record.name) {
+        enhanced._validation.errors.push('Missing team name');
+        enhanced._validation.isValid = false;
+      }
+      
+      return enhanced;
+    });
     
-    // Map actions to resource API service functions
-    switch (action) {
-      case 'getUsers':
-        const users = await resourceApiService.getUsers();
-        return {
-          statusCode: 200,
-          body: JSON.stringify(users)
-        };
-        
-      case 'getTeams':
-        const teams = await resourceApiService.getTeams();
-        return {
-          statusCode: 200,
-          body: JSON.stringify(teams)
-        };
-        
-      case 'getUserAvailability':
-        if (!params || !params.userId || !params.date) {
-          return {
-            statusCode: 400,
-            body: JSON.stringify({
-              success: false,
-              message: 'userId and date parameters are required'
-            })
-          };
-        }
-        
-        const availability = await resourceApiService.getUserAvailability(params.userId, params.date);
-        return {
-          statusCode: 200,
-          body: JSON.stringify(availability)
-        };
-        
-      default:
-        return {
-          statusCode: 400,
-          body: JSON.stringify({
-            success: false,
-            message: `Unknown action: ${action}`
-          })
-        };
-    }
-  } catch (error) {
-    console.error('Error in resource API handler:', error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        success: false,
-        message: error.message || 'Internal server error'
-      })
-    };
-  }
-}
-
-// API handlers for cross-app communication
-export async function usersApiHandler(request) {
-  console.log('Users API request received');
-  
-  try {
-    const users = await resourceApiService.getAllUsers();
-    return {
-      body: JSON.stringify(users),
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      statusCode: 200
-    };
-  } catch (error) {
-    console.error('Error in users API handler:', error);
-    return {
-      body: JSON.stringify({
-        success: false,
-        message: error.message || 'Internal server error'
-      }),
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      statusCode: 500
-    };
-  }
-}
-
-export async function teamsApiHandler(request) {
-  console.log('Teams API request received');
-  
-  try {
-    const teams = await resourceApiService.getAllTeams();
-    return {
-      body: JSON.stringify(teams),
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      statusCode: 200
-    };
-  } catch (error) {
-    console.error('Error in teams API handler:', error);
-    return {
-      body: JSON.stringify({
-        success: false,
-        message: error.message || 'Internal server error'
-      }),
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      statusCode: 500
-    };
-  }
-}
-
-export async function availabilityApiHandler(request) {
-  console.log('Availability API request received:', request.body);
-  
-  try {
-    const { userId, date } = JSON.parse(request.body);
-    
-    if (!userId || !date) {
+    // For final batch, return complete results
+    if (batchIndex === 0 || (batchIndex + 1) * batchSize >= importData.length) {
       return {
-        body: JSON.stringify({
-          success: false,
-          message: 'userId and date parameters are required'
-        }),
-        headers: {
-          'Content-Type': 'application/json'
+        success: true,
+        data: {
+          validation: {
+            totalRecords: enhancedRecords.length,
+            validRecords: enhancedRecords.filter(r => r._validation.isValid).length,
+            invalidRecords: enhancedRecords.filter(r => !r._validation.isValid).length,
+            errors: enhancedRecords.filter(r => !r._validation.isValid).map(r => r._validation.errors).flat()
+          },
+          isComplete: true,
+          enhancedData: enhancedRecords,
+          chunks: 1
         },
-        statusCode: 400
+        message: `Database validation complete: ${enhancedRecords.length} records processed`
       };
     }
     
-    const availability = await resourceApiService.getUserAvailability(userId, date);
     return {
-      body: JSON.stringify(availability),
-      headers: {
-        'Content-Type': 'application/json'
+      success: true,
+      data: {
+        isComplete: false,
+        currentBatch: batchIndex,
+        totalBatches: Math.ceil(importData.length / batchSize)
       },
-      statusCode: 200
+      message: 'Batch validation in progress...'
     };
+    
   } catch (error) {
-    console.error('Error in availability API handler:', error);
+    console.error('❌ Validation error:', error);
     return {
-      body: JSON.stringify({
-        success: false,
-        message: error.message || 'Internal server error'
-      }),
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      statusCode: 500
+      success: false,
+      message: 'Validation failed: ' + error.message,
+      data: { validation: { errors: [error.message] }, isComplete: true }
     };
   }
-}
+});
 
+// Bulk Import Users from Jira
+resolver.define('bulkImportUsersFromJira', async (req) => {
+  try {
+    const { selectedUserIds, defaultTeamId, defaultDepartment } = req.payload || {};
+    
+    if (!selectedUserIds || selectedUserIds.length === 0) {
+      throw new Error('No users selected for import');
+    }
+    
+    console.log(`📥 Bulk importing ${selectedUserIds.length} users from Jira`);
+    
+    // Get detailed user information from Jira for selected users
+    const userDetails = [];
+    const batchSize = 10;
+    
+    for (let i = 0; i < selectedUserIds.length; i += batchSize) {
+      const batch = selectedUserIds.slice(i, i + batchSize);
+      
+      for (const accountId of batch) {
+        try {
+          const userResponse = await api.asUser().requestJira(
+            route`/rest/api/3/user?accountId=${accountId}`
+          );
+          
+          if (userResponse.ok) {
+            const userData = await userResponse.json();
+            userDetails.push(userData);
+          }
+        } catch (error) {
+          console.warn(`Failed to get details for user ${accountId}:`, error.message);
+        }
+      }
+      
+      // Small delay between batches
+      if (i + batchSize < selectedUserIds.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    
+    // Process the results similar to your existing bulkImportUsers function
+    return await this.resolve('bulkImportUsers', {
+      payload: { selectedUserIds, defaultTeamId }
+    });
+  } catch (error) {
+    console.error('❌ Error bulk importing users from Jira:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to bulk import users from Jira'
+    };
+  }
+});
+export const handler = resolver.getDefinitions();

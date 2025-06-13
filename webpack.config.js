@@ -4,11 +4,13 @@ const TerserPlugin = require('terser-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 
 module.exports = {
+  target: 'web', // Ensure we're targeting web environment
   entry: './src/static/index.jsx',
   output: {
     path: path.resolve(__dirname, 'static'),
     filename: '[name].[contenthash].js',
     clean: true,
+    globalObject: 'this' // Prevent window/global issues
   },
   mode: process.env.NODE_ENV || 'production',
   optimization: {
@@ -53,7 +55,7 @@ module.exports = {
                 }
               }], 
               ['@babel/preset-react', {
-                runtime: 'automatic'
+                runtime: 'classic'
               }]
             ],
             plugins: ['@babel/plugin-syntax-dynamic-import']
@@ -81,17 +83,17 @@ module.exports = {
   ],
   resolve: {
     extensions: ['.js', '.jsx'],
-    alias: {
-      'react': path.resolve(__dirname, 'node_modules/react'),
-      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
-    },
     fallback: {
       "crypto": false,
       "buffer": false,
-      "stream": false
+      "stream": false,
+      "path": false,
+      "fs": false
     }
   },
-  externals: {
-    // Don't externalize React - let webpack bundle it
+  node: {
+    global: false,
+    __filename: false,
+    __dirname: false,
   }
 };
