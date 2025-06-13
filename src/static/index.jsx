@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { view } from '@forge/bridge';
-import './styles/app.css'
+import './styles/styles.css'
 
 // Log initialization message
 console.log('PTO app initializing...');
