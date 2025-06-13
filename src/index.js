@@ -116,7 +116,7 @@ resolver.define('initializePTODatabase', async (req) => {
     console.log('🔧 Initializing PTO Database...');
     
     // Initialize empty arrays for each table if they don't exist
-    const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_balances'];
+    const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams'];
     
     for (const table of tables) {
       const existing = await storage.get(table);
@@ -263,7 +263,7 @@ resolver.define('migrateDatabaseStructure', async (req) => {
 // Add this new resolver to check storage sizes
 resolver.define('checkStorageSizes', async (req) => {
   try {
-    const tables = ['teams', 'users', 'pto_requests', 'pto_daily_schedules', 'pto_balances', 'pto_teams', 'pto_admins'];
+    const tables = ['teams', 'users', 'pto_requests', 'pto_daily_schedules', 'pto_teams', 'pto_admins'];
     const sizes = {};
     
     for (const table of tables) {
@@ -1769,52 +1769,6 @@ resolver.define('editPTORequest', async (req) => {
 
 
 
-// PTO Balances Management
-resolver.define('getUserPTOBalances', async (req) => {
-  try {
-    const { accountId } = req.payload || {};
-    const balances = await storage.get('pto_balances') || [];
-    
-    const userBalances = balances.filter(b => b.user_id === accountId || b.account_id === accountId);
-    
-    return {
-      success: true,
-      data: userBalances
-    };
-  } catch (error) {
-    console.error('❌ Error getting PTO balances:', error);
-    return {
-      success: false,
-      message: error.message || 'Failed to get PTO balances'
-    };
-  }
-});
-resolver.define('deletePTOBalance', async (req) => {
-  try {
-    const { user_id, leave_type, year } = req.payload || {};
-    const balances = await storage.get('pto_balances') || [];
-    
-    const filteredBalances = balances.filter(b => 
-      !(b.user_id === user_id && b.leave_type === leave_type && b.year === year)
-    );
-    
-    await storage.set('pto_balances', filteredBalances);
-    
-    return { 
-      success: true,
-      message: 'PTO balance deleted successfully'
-    };
-  } catch (error) {
-    return { 
-      success: false, 
-      message: error.message 
-    };
-  }
-});
-
-// Get Pending Requests (for managers)
-
-
 
 // Team Analytics
 resolver.define('getTeamAnalytics', async (req) => {
@@ -1883,16 +1837,19 @@ resolver.define('debugStorage', async (req) => {
     return {
       success: true,
       data: {
-        users: users.length,
-        teams: teams.length,
-        admins: admins.length,
-        ptoRequests: ptoRequests.length,
-        ptoDailySchedules: ptoDailySchedules.length,
+        // Return actual data arrays for export
+        users,
+        teams,
+        admins,
+        pto_requests: ptoRequests,
+        pto_daily_schedules: ptoDailySchedules,
+        // Keep summary for debug info
         summary: {
           totalUsers: users.length,
           totalTeams: teams.length,
           totalAdmins: admins.length,
-          totalRequests: ptoRequests.length
+          ptoRequestCount: ptoRequests.length,
+          ptoScheduleCount: ptoDailySchedules.length
         }
       }
     };
@@ -1900,10 +1857,11 @@ resolver.define('debugStorage', async (req) => {
     console.error('❌ Error debugging storage:', error);
     return {
       success: false,
-      message: error.message || 'Failed to debug storage'
+      message: error.message
     };
   }
 });
+
 resolver.define('debugUserEmails', async (req) => {
   try {
     const { searchEmail } = req.payload || {};

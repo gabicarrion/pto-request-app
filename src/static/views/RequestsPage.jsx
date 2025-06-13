@@ -17,30 +17,9 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
   const [showFilters, setShowFilters] = useState(false);
   const [dateRange, setDateRange] = useState({ preset: 'all', from: '', to: '' });
   const [editingRequest, setEditingRequest] = useState(null);
-  const [ptoBalances, setPtoBalances] = useState(null);
   const [loadingBalances, setLoadingBalances] = useState(true);
   const [balanceError, setBalanceError] = useState(null);
 
-  useEffect(() => {
-    async function fetchBalances() {
-      setLoadingBalances(true);
-      setBalanceError(null);
-      try {
-        // Replace this with your actual resolver call method
-        const response = await window.forgeResolver.invoke('getUserPTOBalances', { accountId: currentUser.accountId });
-        if (response.success) {
-          setPtoBalances(response.data);
-        } else {
-          setBalanceError(response.message || 'Failed to fetch PTO balances');
-        }
-      } catch (err) {
-        setBalanceError(err.message || 'Failed to fetch PTO balances');
-      } finally {
-        setLoadingBalances(false);
-      }
-    }
-    if (currentUser?.accountId) fetchBalances();
-  }, [currentUser?.accountId]);
 
   const formatDate = (dateString) =>
     new Date(dateString).toLocaleDateString('en-US', {
@@ -304,7 +283,7 @@ const RequestsPage = ({ requests, currentUser, onEditRequest, onCancelRequest })
               <div className="summary-icon">{getLeaveTypeEmoji(type.key)}</div>
               <div className="summary-content">
                 <div className="summary-value">
-                  {loadingBalances ? '...' : (ptoBalances?.[type.key]?.remaining_days ?? '-')}
+                  {loadingBalances ? '...' : ([type.key]?.remaining_days ?? '-')}
                 </div>
                 <div className="summary-label">Available {type.label} Days</div>
               </div>

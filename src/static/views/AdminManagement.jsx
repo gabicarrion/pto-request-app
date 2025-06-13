@@ -60,16 +60,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
 
   // Add PTO Balances tab/section
   const [activeAdminTab, setActiveAdminTab] = useState('actions');
-  const [ptoBalances, setPtoBalances] = useState([]);
-  const [ptoBalancesLoading, setPtoBalancesLoading] = useState(false);
-  const [ptoBalancesYear, setPtoBalancesYear] = useState(new Date().getFullYear());
-  const [ptoBalancesEdit, setPtoBalancesEdit] = useState({});
-
-  // PTO Balances UI enhancements
-  const [ptoBalancesFilter, setPtoBalancesFilter] = useState({ user: '', leaveType: '', year: '' });
-  const [ptoBalancesSearch, setPtoBalancesSearch] = useState('');
-  const [showAddPtoBalanceModal, setShowAddPtoBalanceModal] = useState(false);
-  const [newPtoBalance, setNewPtoBalance] = useState({ user_id: '', leave_type: '', allocated_days: 0, year: new Date().getFullYear() });
 
   // In the import modal logic, add table selection and update upload logic
   const [importTable, setImportTable] = useState('users');
@@ -438,42 +428,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
       showNotification('Failed to export daily schedules', 'error');
     }
   };
-
-  const loadPtoBalances = async () => {
-    setPtoBalancesLoading(true);
-    try {
-      const response = await invoke('getAllPTOBalances', { year: ptoBalancesYear });
-      setPtoBalances(response.success ? response.data : []);
-    } catch (e) {
-      showNotification('Failed to load PTO balances', 'error');
-    } finally {
-      setPtoBalancesLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeAdminTab === 'pto-balances') loadPtoBalances();
-  }, [activeAdminTab, ptoBalancesYear]);
-
-  const filteredPtoBalances = ptoBalances.filter(bal => {
-    const user = allUsers.find(u => u.id === bal.user_id);
-    const matchesUser = !ptoBalancesFilter.user || bal.user_id === ptoBalancesFilter.user;
-    const matchesLeaveType = !ptoBalancesFilter.leaveType || bal.leave_type === ptoBalancesFilter.leaveType;
-    const matchesYear = !ptoBalancesFilter.year || String(bal.year) === String(ptoBalancesFilter.year);
-    const matchesSearch = !ptoBalancesSearch || (user && (
-      user.display_name?.toLowerCase().includes(ptoBalancesSearch.toLowerCase()) ||
-      user.email_address?.toLowerCase().includes(ptoBalancesSearch.toLowerCase())
-    ));
-    return matchesUser && matchesLeaveType && matchesYear && matchesSearch;
-  });
-  const leaveTypes = Array.from(new Set(ptoBalances.map(b => b.leave_type)));
-  const years = Array.from(new Set(ptoBalances.map(b => b.year)));
-  const summary = filteredPtoBalances.reduce((acc, b) => {
-    acc.allocated += b.allocated_days;
-    acc.used += b.used_days;
-    acc.remaining += (b.allocated_days - b.used_days);
-    return acc;
-  }, { allocated: 0, used: 0, remaining: 0 });
 
   return (
     <div className="admin-dashboard">
@@ -890,133 +844,6 @@ const AdminManagement = ({ currentUser, showNotification }) => {
         </div>
       )}
 
-      {activeAdminTab === 'pto-balances' && (
-        <div className="admin-section">
-          <div className="section-header">
-            <h3>PTO Balances</h3>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <label>Year: </label>
-              <select value={ptoBalancesFilter.year} onChange={e => setPtoBalancesFilter(f => ({ ...f, year: e.target.value }))}>
-                <option value="">All</option>
-                {years.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-              <label>Leave Type: </label>
-              <select value={ptoBalancesFilter.leaveType} onChange={e => setPtoBalancesFilter(f => ({ ...f, leaveType: e.target.value }))}>
-                <option value="">All</option>
-                {leaveTypes.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <label>User: </label>
-              <select value={ptoBalancesFilter.user} onChange={e => setPtoBalancesFilter(f => ({ ...f, user: e.target.value }))}>
-                <option value="">All</option>
-                {allUsers.map(u => <option key={u.id} value={u.id}>{u.display_name} ({u.email_address})</option>)}
-              </select>
-              <input type="text" placeholder="Search user..." value={ptoBalancesSearch} onChange={e => setPtoBalancesSearch(e.target.value)} style={{ marginLeft: 8 }} />
-              <button className="btn btn-primary" onClick={() => setShowAddPtoBalanceModal(true)}>Add PTO Balance</button>
-            </div>
-          </div>
-          {ptoBalancesLoading ? (
-            <div className="loading-container"><div className="loading-spinner"></div>Loading...</div>
-          ) : (
-            <table className="requests-table">
-              <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Email</th>
-                  <th>Leave Type</th>
-                  <th>Allocated</th>
-                  <th>Used</th>
-                  <th>Remaining</th>
-                  <th>Year</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredPtoBalances.map((bal, idx) => {
-                  const user = allUsers.find(u => u.id === bal.user_id);
-                  return (
-                    <tr key={idx}>
-                      <td>{user?.display_name || bal.user_id}</td>
-                      <td>{user?.email_address || ''}</td>
-                      <td>{bal.leave_type}</td>
-                      <td>
-                        <input type="number" value={ptoBalancesEdit[idx]?.allocated_days ?? bal.allocated_days} min={0}
-                          onChange={e => setPtoBalancesEdit(edit => ({ ...edit, [idx]: { ...edit[idx], allocated_days: Number(e.target.value) } }))} />
-                      </td>
-                      <td>{bal.used_days}</td>
-                      <td>{(ptoBalancesEdit[idx]?.allocated_days ?? bal.allocated_days) - bal.used_days}</td>
-                      <td>{bal.year}</td>
-                      <td style={{ display: 'flex', gap: 4 }}>
-                        <button className="btn btn-sm btn-primary" onClick={async () => {
-                          setPtoBalancesLoading(true);
-                          await invoke('setPTOBalance', {
-                            ...bal,
-                            allocated_days: ptoBalancesEdit[idx]?.allocated_days ?? bal.allocated_days
-                          });
-                          setPtoBalancesEdit(edit => ({ ...edit, [idx]: undefined }));
-                          await loadPtoBalances();
-                        }}>Save</button>
-                        <button className="btn btn-sm btn-danger" onClick={async () => {
-                          if (!window.confirm('Delete this PTO balance?')) return;
-                          setPtoBalancesLoading(true);
-                          await invoke('deletePTOBalance', { user_id: bal.user_id, leave_type: bal.leave_type, year: bal.year });
-                          await loadPtoBalances();
-                        }}>Delete</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                <tr style={{ fontWeight: 'bold', background: '#f9fafb' }}>
-                  <td colSpan={3}>Total</td>
-                  <td>{summary.allocated}</td>
-                  <td>{summary.used}</td>
-                  <td>{summary.remaining}</td>
-                  <td colSpan={2}></td>
-                </tr>
-              </tbody>
-            </table>
-          )}
-          {showAddPtoBalanceModal && (
-            <div className="modal-overlay">
-              <div className="modal-content" style={{ maxWidth: 400, margin: 'auto', padding: 24 }}>
-                <h4>Add PTO Balance</h4>
-                <div className="form-group">
-                  <label>User</label>
-                  <select className="form-control" value={newPtoBalance.user_id} onChange={e => setNewPtoBalance(b => ({ ...b, user_id: e.target.value }))}>
-                    <option value="">Select user</option>
-                    {allUsers.map(u => <option key={u.id} value={u.id}>{u.display_name} ({u.email_address})</option>)}
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Leave Type</label>
-                  <input className="form-control" value={newPtoBalance.leave_type} onChange={e => setNewPtoBalance(b => ({ ...b, leave_type: e.target.value }))} placeholder="e.g. vacation" />
-                </div>
-                <div className="form-group">
-                  <label>Allocated Days</label>
-                  <input className="form-control" type="number" value={newPtoBalance.allocated_days} min={0} onChange={e => setNewPtoBalance(b => ({ ...b, allocated_days: Number(e.target.value) }))} />
-                </div>
-                <div className="form-group">
-                  <label>Year</label>
-                  <input className="form-control" type="number" value={newPtoBalance.year} onChange={e => setNewPtoBalance(b => ({ ...b, year: Number(e.target.value) }))} />
-                </div>
-                <div className="form-actions">
-                  <button className="btn btn-secondary" onClick={() => setShowAddPtoBalanceModal(false)}>Cancel</button>
-                  <button className="btn btn-primary" onClick={async () => {
-                    if (!newPtoBalance.user_id || !newPtoBalance.leave_type || !newPtoBalance.year) {
-                      showNotification('All fields required', 'error');
-                      return;
-                    }
-                    setPtoBalancesLoading(true);
-                    await invoke('setPTOBalance', { ...newPtoBalance, used_days: 0, remaining_days: newPtoBalance.allocated_days });
-                    setShowAddPtoBalanceModal(false);
-                    setNewPtoBalance({ user_id: '', leave_type: '', allocated_days: 0, year: new Date().getFullYear() });
-                    await loadPtoBalances();
-                  }}>Add</button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Modal Components */}
       {showAddAdmin && (
@@ -1348,7 +1175,8 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                   showNotification(`Imported ${data.length} records into ${importTable}.`, 'success');
                   if (importTable === 'users') await loadUsers();
                   if (importTable === 'teams') await loadTeams();
-                  if (importTable === 'pto_balances') await loadPtoBalances();
+                  if (importTable === 'pto_requests') await loadAllRequests();
+                  if (importTable === 'pto_daily_schedules') await loadAllRequests();
                 };
                 reader.readAsText(file);
               }} />
