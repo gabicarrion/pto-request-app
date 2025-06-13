@@ -111,33 +111,6 @@ export const availabilityApiHandler = async (req) => {
 
 
 // Initialize PTO Database
-resolver.define('initializePTODatabase', async (req) => {
-  try {
-    console.log('🔧 Initializing PTO Database...');
-    
-    // Initialize empty arrays for each table if they don't exist
-    const tables = ['pto_requests', 'pto_daily_schedules', 'pto_teams'];
-    
-    for (const table of tables) {
-      const existing = await storage.get(table);
-      if (!existing) {
-        await storage.set(table, []);
-        console.log(`✅ Initialized table: ${table}`);
-      }
-    }
-    
-    return {
-      success: true,
-      message: 'PTO Database initialized successfully'
-    };
-  } catch (error) {
-    console.error('❌ Database initialization failed:', error);
-    return {
-      success: false,
-      message: error.message
-    };
-  }
-});
 resolver.define('initializePTODatabaseWithTeamManagement', async (req) => {
   try {
     console.log('🔧 Initializing PTO Database with Team Management...');
@@ -257,6 +230,40 @@ resolver.define('migrateDatabaseStructure', async (req) => {
     return {
       success: false,
       message: `Migration failed: ${error.message}`
+    };
+  }
+});
+resolver.define('cleanupConflictingTables', async (req) => {
+  try {
+    console.log('🧹 Cleaning up conflicting database tables...');
+    
+    // Remove old conflicting tables
+    const oldTables = ['pto_teams', 'pto_balances'];
+    const removedTables = [];
+    
+    for (const table of oldTables) {
+      try {
+        const existing = await storage.get(table);
+        if (existing) {
+          await storage.delete(table);
+          removedTables.push(table);
+          console.log(`✅ Removed old table: ${table}`);
+        }
+      } catch (error) {
+        console.log(`⚠️ Table ${table} didn't exist or couldn't be removed`);
+      }
+    }
+    
+    return {
+      success: true,
+      message: 'Conflicting tables cleaned up successfully',
+      removedTables: removedTables
+    };
+  } catch (error) {
+    console.error('❌ Cleanup failed:', error);
+    return {
+      success: false,
+      message: error.message
     };
   }
 });

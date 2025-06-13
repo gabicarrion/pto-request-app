@@ -678,6 +678,83 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                     <div className="action-desc">Delete ALL PTO requests and schedules</div>
                   </div>
                 </button>
+
+                {/* CLEANUP CONFLICTING TABLES BUTTON */}
+                <button
+                  onClick={async () => {
+                    if (!window.confirm('This will remove old conflicting database tables (pto_teams, pto_balances). Proceed?')) {
+                      return;
+                    }
+                    
+                    setLoading(true);
+                    try {
+                      const response = await invoke('cleanupConflictingTables');
+                      
+                      if (response.success) {
+                        showNotification(`✅ Cleanup complete: Removed tables: ${response.removedTables.join(', ')}`);
+                        loadAllAdminData(); // Refresh all data
+                      } else {
+                        showNotification(response.message || 'Cleanup failed', 'error');
+                      }
+                    } catch (error) {
+                      showNotification('Cleanup failed: ' + error.message, 'error');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }} 
+                  className="admin-action-btn"
+                  disabled={loading}
+                >
+                  <div className="action-icon bg-purple">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div className="action-content">
+                    <div className="action-title">🧹 Cleanup DB Schema</div>
+                    <div className="action-desc">Remove conflicting database tables</div>
+                  </div>
+                </button>
+
+                {/* CLEANUP PTO DATABASE BUTTON */}
+                <button 
+                  onClick={async () => {
+                    if (!window.confirm('⚠️ WARNING: This will DELETE ALL PTO data (requests + daily schedules). This cannot be undone. Are you sure?')) {
+                      return;
+                    }
+                    
+                    if (!window.confirm('Final confirmation: Delete ALL PTO data? Type YES to confirm.')) {
+                      return;
+                    }
+                    
+                    setLoading(true);
+                    try {
+                      const response = await invoke('cleanupPTODatabase', {
+                        adminId: currentUser.accountId,
+                        confirmDelete: true
+                      });
+                      
+                      if (response.success) {
+                        showNotification(`✅ Cleanup complete: ${response.data.deletedCount} items removed`);
+                        loadAllAdminData(); // Refresh all data
+                      } else {
+                        showNotification(response.message || 'Cleanup failed', 'error');
+                      }
+                    } catch (error) {
+                      showNotification('Cleanup failed: ' + error.message, 'error');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }} 
+                  className="admin-action-btn"
+                  disabled={loading}
+                >
+                  <div className="action-icon bg-red">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div className="action-content">
+                    <div className="action-title">🗑️ Cleanup PTO Database</div>
+                    <div className="action-desc">Delete ALL PTO requests and schedules</div>
+                  </div>
+                </button>
                 <button
                   onClick={async () => {
                     try {
