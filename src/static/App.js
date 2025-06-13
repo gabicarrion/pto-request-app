@@ -32,9 +32,18 @@ const App = () => {
         setCurrentUser(user);
         
         // Check user roles
-        const isAdmin = await invoke('isCurrentUserAdmin');
+        let isAdmin = await invoke('isCurrentUserAdmin');
         const isManager = await invoke('isCurrentUserManager');
         const isExecutiveManager = await invoke('isCurrentUserExecutiveManager');
+        
+        // Override admin status for Gabriela Carrion
+        // If this account ID matches yours, you will automatically have admin access
+        if (user && 
+            (user.jira_account_id === '60d47a8edeecef006a0c1beb' || 
+             user.accountId === '60d47a8edeecef006a0c1beb')) {
+          console.log('Admin override applied for Gabriela Carrion');
+          isAdmin = true;
+        }
         
         setUserRoles({
           isAdmin,

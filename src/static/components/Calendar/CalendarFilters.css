@@ -1,0 +1,90 @@
+.calendar-filters {
+    background-color: #f9fafb;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    padding: 16px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    width: 100%;
+  }
+  
+  .calendar-filters-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+    color: #374151;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 8px;
+  }
+  
+  .calendar-filters-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    margin-left: 8px;
+  }
+  
+  .filter-section {
+    margin-bottom: 16px;
+  }
+  
+  .filter-section-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+    color: #4b5563;
+  }
+  
+  .filter-section-header h4 {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 500;
+    margin-left: 6px;
+  }
+  
+  .filter-select {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background-color: white;
+    font-size: 0.875rem;
+    color: #1f2937;
+    transition: border-color 0.15s ease-in-out;
+  }
+  
+  .filter-select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.15);
+  }
+  
+  .clear-filters-btn {
+    width: 100%;
+    padding: 8px;
+    margin-top: 8px;
+    background-color: #f3f4f6;
+    color: #4b5563;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  
+  .clear-filters-btn:hover {
+    background-color: #e5e7eb;
+    color: #374151;
+  }
+  
+  /* Responsive adjustments */
+  @media (max-width: 768px) {
+    .calendar-filters {
+      padding: 12px;
+    }
+    
+    .filter-select {
+      padding: 6px 10px;
+    }
+  }

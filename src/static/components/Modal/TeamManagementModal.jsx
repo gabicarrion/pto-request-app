@@ -2,9 +2,26 @@ import React from 'react';
 import { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
 import UserPicker from './Common/UserPicker';
+import JiraUserImport from './JiraUserImport';
 import { User, UserPlus, Download, RefreshCw, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import Papa from 'papaparse';
+import './TeamManagementModal.css';
 
+/**
+ * TeamManagementModal component for managing teams and users
+ * 
+ * @param {Object} props
+ * @param {boolean} props.isOpen - Whether the modal is open
+ * @param {Function} props.onClose - Function to close the modal
+ * @param {Array} props.teams - List of teams
+ * @param {Array} props.users - List of users
+ * @param {Function} props.onSaveTeam - Handler for saving a team
+ * @param {Function} props.onDeleteTeam - Handler for deleting a team
+ * @param {Function} props.onSaveUser - Handler for saving a user
+ * @param {Function} props.onDeleteUser - Handler for deleting a user
+ * @param {Function} props.showNotification - Function to show notifications
+ * @param {Function} props.onRefresh - Function to refresh data
+ */
 function TeamManagementModal({ 
   isOpen, 
   onClose, 
@@ -15,7 +32,8 @@ function TeamManagementModal({
   onSaveUser,
   onDeleteUser,
   showNotification,
-  onRefresh
+  onRefresh,
+  currentUser
 }) {
   const [activeTab, setActiveTab] = useState('teams');
   const [activeSubTab, setActiveSubTab] = useState('list');
@@ -84,7 +102,6 @@ function TeamManagementModal({
     'Operations',
     'Finance',
     'HR'
-    
   ];
 
   // Add state for bulk role
@@ -771,28 +788,6 @@ function TeamManagementModal({
 
   const usersNotInSystem = getUsersNotInSystem();
 
-  const normalizeManager = (manager) => {
-    if (!manager) return null;
-    return {
-      ...manager,
-      accountId: manager.accountId || manager.jira_account_id || manager.id,
-      displayName: manager.displayName || manager.display_name || manager.name,
-      emailAddress: manager.emailAddress || manager.email_address,
-      avatarUrl: manager.avatarUrl || manager.avatar_url,
-    };
-  };
-
-  const getManagerName = (managerId) => {
-    if (!managerId) return '-';
-    const user = users.find(
-      u =>
-        u.jira_account_id === managerId ||
-        u.accountId === managerId ||
-        u.id === managerId
-    );
-    return user ? (user.display_name || user.displayName || user.name) : managerId;
-  };
-
   return (
     <div className="modal-overlay">
       <div className="modal-content team-management-modal">
@@ -896,11 +891,29 @@ function TeamManagementModal({
                         <tbody>
                           {teams.map(team => {
                             const teamMembers = getTeamMembers(team.id);
+                            const teamManager = users.find(user => 
+                              user.id === team.manager || 
+                              user.jira_account_id === team.manager
+                            );
                             return (
                               <tr key={team.id}>
-                                <td>{team.name}</td>
+                                <td>
+                                  <div className="team-name">
+                                    <div 
+                                      className="team-color" 
+                                      style={{ backgroundColor: team.color || '#667eea' }}
+                                    ></div>
+                                    {team.name}
+                                  </div>
+                                </td>
                                 <td>{team.department || '-'}</td>
-                                <td>{getManagerName(team.manager)}</td>
+                                <td>
+                                  {teamManager ? (
+                                    teamManager.display_name || 
+                                    teamManager.displayName || 
+                                    `${teamManager.first_name} ${teamManager.last_name}`
+                                  ) : '-'}
+                                </td>
                                 <td>{teamMembers.length}</td>
                                 <td>
                                   <button 
@@ -961,8 +974,8 @@ function TeamManagementModal({
                     <div className="form-group">
                       <label htmlFor="team-manager">Manager</label>
                       <UserPicker
-                        selectedUser={teamFormData.manager ? users.find(u => u.id === teamFormData.manager) || null : null}
-                        onSelect={user => handleManagerChange(user ? user.id : '')}
+                        selectedUser={teamFormData.manager}
+                        onSelect={handleManagerChange}
                         placeholder="Search and select manager"
                         disabled={loading}
                         error={errors.manager}
@@ -1047,7 +1060,7 @@ function TeamManagementModal({
                   className={`team-management-sub-tab ${activeSubTab === 'import' ? 'team-management-sub-tab-active' : ''}`}
                   onClick={() => setActiveSubTab('import')}
                 >
-                  Import from Jira ({usersNotInSystem.length})
+                  Import from Jira
                 </button>
               </div>
 
@@ -1057,7 +1070,7 @@ function TeamManagementModal({
                     <h4>Users</h4>
                     <button
                       className="btn btn-primary"
-                      disabled={selectedUserIds.length === users.length && users.length > 0}
+                      disabled={selectedUserIds.length === 0}
                       onClick={() => setShowBulkTeamModal(true)}
                     >
                       Bulk Add to Team
@@ -1085,21 +1098,69 @@ function TeamManagementModal({
                         </tr>
                       </thead>
                       <tbody>
-                        {users.map(user => (
-                          <tr key={user.id}>
-                            <td><input type="checkbox" checked={selectedUserIds.includes(user.id)} onChange={e => setSelectedUserIds(e.target.checked ? [...selectedUserIds, user.id] : selectedUserIds.filter(id => id !== user.id))} /></td>
-                            <td>{user.display_name || user.displayName || user.name}</td>
-                            <td>{user.email_address || user.emailAddress || '-'}</td>
-                            <td>{(user.team_memberships || []).map(tm => {
-                              const t = teams.find(team => team.id === tm.team_id);
-                              return t ? `${t.name} (${tm.role})` : tm.team_id;
-                            }).join(', ')}</td>
-                            <td>
-                              <button className="btn btn-sm btn-secondary" onClick={() => handleEditUser(user)} disabled={loading}>Edit</button>
-                              <button className="btn btn-sm btn-danger" onClick={() => handleDeleteUser(user.id, user.display_name || user.displayName || user.name)} disabled={loading}>Delete</button>
-                            </td>
-                          </tr>
-                        ))}
+                        {users.map(user => {
+                          // Get user's teams
+                          const userTeams = [];
+                          if (user.team_memberships && Array.isArray(user.team_memberships)) {
+                            user.team_memberships.forEach(membership => {
+                              const team = teams.find(t => t.id === membership.team_id);
+                              if (team) {
+                                userTeams.push({
+                                  name: team.name,
+                                  role: membership.role
+                                });
+                              }
+                            });
+                          } else if (user.team_id) {
+                            const team = teams.find(t => t.id === user.team_id);
+                            if (team) {
+                              userTeams.push({
+                                name: team.name,
+                                role: 'Member'
+                              });
+                            }
+                          }
+                          
+                          return (
+                            <tr key={user.id}>
+                              <td><input type="checkbox" checked={selectedUserIds.includes(user.id)} onChange={e => setSelectedUserIds(e.target.checked ? [...selectedUserIds, user.id] : selectedUserIds.filter(id => id !== user.id))} /></td>
+                              <td>
+                                <div className="user-name-cell">
+                                  <div className="user-avatar-small">
+                                    {user.avatar_url ? (
+                                      <img src={user.avatar_url} alt="User Avatar" />
+                                    ) : (
+                                      <div className="avatar-placeholder-small">
+                                        {(user.display_name || user.displayName || '').charAt(0)}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div>
+                                    {user.display_name || user.displayName || `${user.first_name} ${user.last_name}`}
+                                  </div>
+                                </div>
+                              </td>
+                              <td>{user.email_address || user.emailAddress || '-'}</td>
+                              <td>
+                                {userTeams.length > 0 ? (
+                                  <div className="user-teams">
+                                    {userTeams.map((teamInfo, idx) => (
+                                      <span key={idx} className="user-team-badge">
+                                        {teamInfo.name} ({teamInfo.role})
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span className="no-team">No Team</span>
+                                )}
+                              </td>
+                              <td>
+                                <button className="btn btn-sm btn-secondary" onClick={() => handleEditUser(user)} disabled={loading}>Edit</button>
+                                <button className="btn btn-sm btn-danger" onClick={() => handleDeleteUser(user.id, user.display_name || user.displayName || user.name)} disabled={loading}>Delete</button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1443,130 +1504,12 @@ function TeamManagementModal({
 
               {/* Import from Jira Tab */}
               {activeSubTab === 'import' && (
-                <div className="team-management-import-section">
-                  <div className="team-management-import-header">
-                    <div className="team-management-import-title">
-                      <h4>Import Users from Jira</h4>
-                      <p>Select Jira users to import into the PTO system. Users already in the system will not be shown.</p>
-                    </div>
-                    <div className="team-management-import-actions">
-                      <button
-                        onClick={() => loadJiraUsers(0)}
-                        disabled={jiraUsersLoading}
-                        className="btn btn-secondary"
-                      >
-                        <RefreshCw size={16} className={jiraUsersLoading ? 'team-management-spin' : ''} />
-                        Refresh
-                      </button>
-                      {selectedJiraUsers.length > 0 && (
-                        <button
-                          onClick={handleBulkImportUsers}
-                          disabled={importingUsers}
-                          className="btn btn-primary"
-                        >
-                          <UserPlus size={16} />
-                          Import {selectedJiraUsers.length} Selected
-                          {importingUsers && ' (Importing...)'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {jiraUsersLoading && jiraUsers.length === 0 ? (
-                    <div className="team-management-loading-state">
-                      <div className="team-management-loading-spinner"></div>
-                      <p>Loading Jira users...</p>
-                    </div>
-                  ) : usersNotInSystem.length === 0 ? (
-                    <div className="team-management-empty-state">
-                      <div className="team-management-empty-icon">✅</div>
-                      <h4>All Jira Users Imported</h4>
-                      <p>All available Jira users from your organization are already in the system.</p>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="team-management-import-stats">
-                        <div className="team-management-import-stat">
-                          <span className="team-management-import-stat-label">Total Jira Users:</span>
-                          <span className="team-management-import-stat-value">{jiraUsersPagination.total}</span>
-                        </div>
-                        <div className="team-management-import-stat">
-                          <span className="team-management-import-stat-label">Available to Import:</span>
-                          <span className="team-management-import-stat-value">{usersNotInSystem.length}</span>
-                        </div>
-                        <div className="team-management-import-stat">
-                          <span className="team-management-import-stat-label">Selected:</span>
-                          <span className="team-management-import-stat-value">{selectedJiraUsers.length}</span>
-                        </div>
-                      </div>
-
-                      <div className="team-management-jira-users-grid">
-                        {usersNotInSystem.map(jiraUser => {
-                          const isSelected = selectedJiraUsers.some(user => user.accountId === jiraUser.accountId);
-                          return (
-                            <div key={jiraUser.accountId} className="team-management-jira-user-card">
-                              <div className="team-management-jira-user-header">
-                                <label className="team-management-jira-user-checkbox">
-                                  <input
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    onChange={(e) => handleJiraUserSelection(jiraUser, e.target.checked)}
-                                    disabled={importingUsers}
-                                  />
-                                  <span className="team-management-checkbox-custom"></span>
-                                </label>
-                                <div className="team-management-jira-user-avatar">
-                                  {jiraUser.avatarUrl ? (
-                                    <img src={jiraUser.avatarUrl} alt={jiraUser.displayName} />
-                                  ) : (
-                                    <div className="team-management-avatar-placeholder">
-                                      {jiraUser.displayName?.charAt(0) || '?'}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="team-management-jira-user-info">
-                                <h5 className="team-management-jira-user-name">{jiraUser.displayName}</h5>
-                                <div className="team-management-jira-user-email">{jiraUser.emailAddress}</div>
-                                <div className="team-management-jira-user-active">
-                                  {jiraUser.active ? '✅ Active' : '❌ Inactive'}
-                                </div>
-                              </div>
-                              <div className="team-management-jira-user-actions">
-                                <button
-                                  onClick={() => handleCreateUserFromJira(jiraUser)}
-                                  className="btn btn-sm btn-secondary"
-                                  disabled={importingUsers}
-                                >
-                                  <User size={14} />
-                                  Create User
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Pagination */}
-                      {!jiraUsersPagination.isLast && (
-                        <div className="team-management-pagination">
-                          <button
-                            onClick={() => loadJiraUsers(jiraUsersPagination.startAt + jiraUsersPagination.maxResults)}
-                            disabled={jiraUsersLoading}
-                            className="btn btn-secondary"
-                          >
-                            <ChevronRight size={16} />
-                            Load More Users
-                            {jiraUsersLoading && ' (Loading...)'}
-                          </button>
-                          <div className="team-management-pagination-info">
-                            Showing {jiraUsers.length} of {jiraUsersPagination.total} Jira users
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
+                <JiraUserImport
+                  existingUsers={users}
+                  teams={teams}
+                  onUserImport={onRefresh}
+                  showNotification={showNotification}
+                />
               )}
             </>
           )}

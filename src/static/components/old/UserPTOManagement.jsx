@@ -2,7 +2,7 @@ import React from 'react';
 import { useState, useEffect } from 'react';
 import { Calendar, Clock, CheckCircle, XCircle, Edit2, Trash2, AlertCircle } from 'lucide-react';
 import { invoke } from '@forge/bridge';
-import UserPicker from './Common/UserPicker';
+import UserPicker from '../Common/UserPicker';
 import EditPTOModal from './EditPTOModal';
 
 const UserPTOManagement = ({ currentUser, showNotification, isAdmin }) => {
