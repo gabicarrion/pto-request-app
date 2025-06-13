@@ -319,7 +319,7 @@ export class TeamUserService {
     }
   }
 
-  async getUsers() {
+  async getAllUsers() {
     try {
       const users = await storage.get(this.USERS_KEY) || [];
       

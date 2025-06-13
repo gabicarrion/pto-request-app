@@ -4,14 +4,14 @@ import { Calendar, Clock, Users, CheckCircle, User, Shield, UserCheck } from 'lu
 import { invoke } from '@forge/bridge';
 
 // Components
-import Notification from './components/Notifications';
-import AdminManagement from './views/AdminManagement';
-import ManagerView from './views/ManagerView';
-import UserPicker from './components/UserPicker';
+import Notification from './components/Common/Notifications';
+import AdminManagement from './components/Admin/AdminManagement';
+import ManagerView from './components/Manager/ManagerView';
+import UserPicker from './components/Common/UserPicker';
 
 // Pages & Hooks
-import CalendarPage from './views/CalendarPage';
-import RequestsPage from './views/RequestsPage';
+import CalendarPage from './components/Calendar/CalendarPage';
+import RequestsPage from './components/MyRequests/RequestsPage';
 
 import useCurrentUser from './hooks/useCurrentUser';
 import usePTORequests from './hooks/usePTORequests';
@@ -62,7 +62,7 @@ const PTOManagementApp = () => {
 
         // Load all users and teams for admin/manager functionality
         const [usersResponse, teamsResponse] = await Promise.all([
-          invoke('getUsers'),
+          invoke('getAllUsers'),
           invoke('getTeams')
         ]);
 

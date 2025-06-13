@@ -2,8 +2,8 @@ import React from 'react';
 import { useState, useEffect } from 'react';
 import { Calendar, Clock, CheckCircle, XCircle, Edit2, Trash2, AlertCircle } from 'lucide-react';
 import { invoke } from '@forge/bridge';
-import UserPicker from './UserPicker';
-import EditPTOModal from './EditPTOModal';
+import UserPicker from '../Common/UserPicker';
+import EditPTOModal from '../Calendar/EditPTOModal';
 
 const UserPTOManagement = ({ currentUser, showNotification, isAdmin }) => {
   const [selectedUser, setSelectedUser] = useState(null);
@@ -24,7 +24,7 @@ const UserPTOManagement = ({ currentUser, showNotification, isAdmin }) => {
   const loadUserData = async (userId) => {
     try {
       // Get user details from database
-      const dbResponse = await invoke('getUsers');
+      const dbResponse = await invoke('getAllUsers');
       const dbUsers = dbResponse.success ? dbResponse.data || [] : [];
       const userDetails = dbUsers.find(u => 
         u.jira_account_id === userId || 

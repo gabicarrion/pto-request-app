@@ -4,11 +4,11 @@ import {
   BarChart3, Database, FileText, TrendingUp, Clock, CheckCircle, XCircle, Settings, Plus, Upload, AlertTriangle
 } from 'lucide-react';
 import { invoke } from '@forge/bridge';
-import UserPicker from '../components/UserPicker';
-import PTOSubmissionModal from '../components/PTOSubmissionModal';
-import TeamManagementModal from '../components/TeamManagementModal';
-import UserPTOManagement from '../components/UserPTOManagement';
-import PTOImportModal from '../components/PTOImportModal';
+import UserPicker from '../Common/UserPicker';
+import PTOSubmissionModal from '../Calendar/PTOSubmissionModal';
+import TeamManagementModal from './TeamManagementModal';
+import UserPTOManagement from './UserPTOManagement';
+import PTOImportModal from './PTOImportModal';
 
 const AdminManagement = ({ currentUser, showNotification }) => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -19,7 +19,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
   const [allRequests, setAllRequests] = useState([]);
   const [jiraUsers, setJiraUsers] = useState([]);
   const [showAddAdmin, setShowAddAdmin] = useState(false);
-  const [showTeamManagementModal, setShowTeamManagementModal] = useState(false);
+  const [showTeamManagementModal, setTeamManagementModal] = useState(false);
   const [showAddPTOModal, setShowAddPTOModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -97,7 +97,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
       if (response.success) {
         const adminUsers = response.data || [];
         // Get full user details from database
-        const dbResponse = await invoke('getUsers');
+        const dbResponse = await invoke('getAllUsers');
         const dbUsers = dbResponse.success ? dbResponse.data || [] : [];
         
         // Map admin users with full details
@@ -125,7 +125,7 @@ const AdminManagement = ({ currentUser, showNotification }) => {
 
   const loadAllUsers = async () => {
     try {
-      const response = await invoke('getUsers');
+      const response = await invoke('getAllUsers');
       if (response.success) setAllUsers(response.data || []);
     } catch {}
   };
@@ -540,12 +540,12 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                   </div>
                 </button>
 
-                <button 
-                  onClick={() => setShowTeamManagementModal(true)} 
+                <button
+                  onClick={() => setTeamManagementModal(true)}
                   className="admin-action-btn"
                 >
                   <div className="action-icon bg-indigo">
-                    <Settings size={20} />
+                    <Users size={20} />
                   </div>
                   <div className="action-content">
                     <div className="action-title">Manage Teams & Users</div>
@@ -755,6 +755,8 @@ const AdminManagement = ({ currentUser, showNotification }) => {
                     <div className="action-desc">Delete ALL PTO requests and schedules</div>
                   </div>
                 </button>
+
+                {/* button to check storage sizes */}
                 <button
                   onClick={async () => {
                     try {
@@ -1041,28 +1043,11 @@ const AdminManagement = ({ currentUser, showNotification }) => {
         </Modal>
       )}
 
+      {/* Teams & Users Management Modal */}
       {showTeamManagementModal && (
         <TeamManagementModal
           isOpen={showTeamManagementModal}
-          onClose={() => setShowTeamManagementModal(false)}
-          teams={allTeams}
-          users={allUsers}
-          onSaveTeam={async teamData => {
-            await invoke(teamData.id ? 'updateTeam' : 'createTeam', teamData);
-            loadAllTeams();
-          }}
-          onDeleteTeam={async teamId => {
-            await invoke('deleteTeam', { teamId, deletedBy: currentUser.accountId });
-            loadAllTeams();
-          }}
-          onSaveUser={async userData => {
-            await invoke(userData.id ? 'updateUser' : 'createUser', userData);
-            loadAllUsers();
-          }}
-          onDeleteUser={async userId => {
-            await invoke('deleteUser', { userId, deletedBy: currentUser.accountId });
-            loadAllUsers();
-          }}
+          onClose={() => setTeamManagementModal(false)}
           showNotification={showNotification}
           onRefresh={loadAllAdminData}
         />

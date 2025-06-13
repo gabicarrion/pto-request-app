@@ -372,6 +372,36 @@ resolver.define('getTeams', async (req) => {
     };
   }
 });
+resolver.define('getTeamById', async (req) => {
+  try {
+    const { team_id } = req.payload;
+    
+    if (!team_id) {
+      throw new Error('Team ID is required');
+    }
+
+    const teams = await storage.get('teams') || [];
+    const team = teams.find(team => 
+      (team.team_id || team.id) === team_id
+    );
+
+    if (!team) {
+      throw new Error('Team not found');
+    }
+
+    return {
+      success: true,
+      data: team,
+      message: 'Team found'
+    };
+  } catch (error) {
+    console.error('❌ Error getting team:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to get team'
+    };
+  }
+});
 resolver.define('createTeam', async (req) => {
   try {
     const teamData = req.payload || {};
@@ -584,7 +614,65 @@ resolver.define('removeTeamMember', async (req) => {
     };
   }
 });
+resolver.define('bulkUpdateTeamMemberships', async (req) => {
+  try {
+    const { team_id, member_updates } = req.payload;
+    
+    if (!team_id || !Array.isArray(member_updates)) {
+      throw new Error('Team ID and member updates array are required');
+    }
 
+    const users = await storage.get('users') || [];
+    let updatedCount = 0;
+
+    for (const update of member_updates) {
+      const userIndex = users.findIndex(user => 
+        (user.user_id || user.id) === update.user_id
+      );
+
+      if (userIndex !== -1) {
+        const currentMemberships = users[userIndex].team_memberships || [];
+        const membershipIndex = currentMemberships.findIndex(tm => tm.team_id === team_id);
+
+        if (update.role) {
+          // Add or update membership
+          if (membershipIndex !== -1) {
+            currentMemberships[membershipIndex].role = update.role;
+          } else {
+            currentMemberships.push({ team_id, role: update.role });
+          }
+        } else {
+          // Remove membership
+          if (membershipIndex !== -1) {
+            currentMemberships.splice(membershipIndex, 1);
+          }
+        }
+
+        users[userIndex] = {
+          ...users[userIndex],
+          team_memberships: currentMemberships,
+          updated_at: new Date().toISOString()
+        };
+        updatedCount++;
+      }
+    }
+
+    await storage.set('users', users);
+
+    console.log(`✅ Bulk updated ${updatedCount} user team memberships`);
+    return {
+      success: true,
+      data: { updated_count: updatedCount },
+      message: `Updated ${updatedCount} user team memberships`
+    };
+  } catch (error) {
+    console.error('❌ Error bulk updating team memberships:', error);
+    return {
+      success: false,
+      message: error.message || 'Failed to bulk update team memberships'
+    };
+  }
+});
 
 // Admin Management
 resolver.define('checkUserAdminStatus', async (req) => {
@@ -768,12 +856,13 @@ resolver.define('getCurrentUserFallback', async (req) => {
     };
   }
 });
-resolver.define('getUsers', async (req) => {
+resolver.define('getAllUsers', async (req) => {
   try {
     const users = await storage.get('users') || [];
     return {
       success: true,
-      data: users
+      data: users,
+      message: `Found ${users.length} users`
     };
   } catch (error) {
     console.error('❌ Error getting users:', error);
@@ -785,22 +874,52 @@ resolver.define('getUsers', async (req) => {
 });
 resolver.define('createUser', async (req) => {
   try {
-    const userData = req.payload || {};
+    const userData = req.payload;
+    
+    // Validate required fields
+    if (!userData.display_name?.trim()) {
+      throw new Error('Display name is required');
+    }
+    if (!userData.email_address?.trim()) {
+      throw new Error('Email address is required');
+    }
+
     const users = await storage.get('users') || [];
     
+    // Check for duplicate email
+    const existingUser = users.find(user => 
+      (user.email_address || user.emailAddress) === userData.email_address
+    );
+    if (existingUser) {
+      throw new Error('Email address already exists');
+    }
+
+    // Create new user with proper database structure
     const newUser = {
-      id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      first_name: userData.firstName || '',
-      last_name: userData.lastName || '',
-      display_name: userData.displayName || '',
-      email_address: userData.emailAddress || '',
-      jira_account_id: userData.jiraAccountId || '',
-      employment_type: userData.employmentType || 'full-time',
-      hire_date: userData.hireDate || '',
-      team_id: userData.teamId || null,
-      capacity: userData.capacity || 40,
-      availability: userData.availability || getDefaultAvailability(),
-      status: 'active',
+      user_id: userData.user_id || `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      jira_account_id: userData.jira_account_id?.trim() || '',
+      display_name: userData.display_name.trim(),
+      email_address: userData.email_address.trim(),
+      team_memberships: userData.team_memberships || [],
+      employment_type: userData.employment_type || 'full_time',
+      capacity: userData.capacity || (userData.employment_type === 'part_time' ? 20 : 40),
+      standard_availability: userData.standard_availability || {
+        monday: { working: true, hours: 8 },
+        tuesday: { working: true, hours: 8 },
+        wednesday: { working: true, hours: 8 },
+        thursday: { working: true, hours: 8 },
+        friday: { working: true, hours: 8 },
+        saturday: { working: false, hours: 0 },
+        sunday: { working: false, hours: 0 }
+      },
+      isAdmin: userData.isAdmin || false,
+      isManager: userData.isManager || [],
+      isExecutive_Manager: userData.isExecutive_Manager || [],
+      pto_accountability_type: userData.pto_accountability_type || 'standard_year',
+      pto_available_in_the_period: userData.pto_available_in_the_period || { vacation: 20, holiday: 10, personal: 1 },
+      hiring_date: userData.hiring_date || new Date().toISOString(),
+      used_pto_days_in_period: userData.used_pto_days_in_period || { vacation: 0, holiday: 0, personal: 0 },
+      remaining_pto_days_in_period: userData.remaining_pto_days_in_period || userData.pto_available_in_the_period || { vacation: 20, holiday: 10, personal: 1 },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -808,6 +927,7 @@ resolver.define('createUser', async (req) => {
     users.push(newUser);
     await storage.set('users', users);
 
+    console.log('✅ User created:', newUser.display_name);
     return {
       success: true,
       data: newUser,
@@ -823,22 +943,68 @@ resolver.define('createUser', async (req) => {
 });
 resolver.define('updateUser', async (req) => {
   try {
-    const userData = req.payload || {};
-    const users = await storage.get('users') || [];
+    const userData = req.payload;
     
-    const userIndex = users.findIndex(u => u.id === userData.id);
+    if (!userData.user_id) {
+      throw new Error('User ID is required for update');
+    }
+
+    if (!userData.display_name?.trim()) {
+      throw new Error('Display name is required');
+    }
+    if (!userData.email_address?.trim()) {
+      throw new Error('Email address is required');
+    }
+
+    const users = await storage.get('users') || [];
+    const userIndex = users.findIndex(user => 
+      (user.user_id || user.id) === userData.user_id
+    );
+
     if (userIndex === -1) {
       throw new Error('User not found');
     }
-    
+
+    // Check for duplicate email (excluding current user)
+    const existingUser = users.find((user, index) => 
+      index !== userIndex && (user.email_address || user.emailAddress) === userData.email_address
+    );
+    if (existingUser) {
+      throw new Error('Email address already exists');
+    }
+
+    // Update user with proper database structure
     users[userIndex] = {
       ...users[userIndex],
-      ...userData,
+      jira_account_id: userData.jira_account_id?.trim() || users[userIndex].jira_account_id || '',
+      display_name: userData.display_name.trim(),
+      email_address: userData.email_address.trim(),
+      team_memberships: userData.team_memberships || users[userIndex].team_memberships || [],
+      employment_type: userData.employment_type || users[userIndex].employment_type || 'full_time',
+      capacity: userData.capacity || users[userIndex].capacity || (userData.employment_type === 'part_time' ? 20 : 40),
+      standard_availability: userData.standard_availability || users[userIndex].standard_availability || {
+        monday: { working: true, hours: 8 },
+        tuesday: { working: true, hours: 8 },
+        wednesday: { working: true, hours: 8 },
+        thursday: { working: true, hours: 8 },
+        friday: { working: true, hours: 8 },
+        saturday: { working: false, hours: 0 },
+        sunday: { working: false, hours: 0 }
+      },
+      isAdmin: userData.isAdmin !== undefined ? userData.isAdmin : users[userIndex].isAdmin || false,
+      isManager: userData.isManager || users[userIndex].isManager || [],
+      isExecutive_Manager: userData.isExecutive_Manager || users[userIndex].isExecutive_Manager || [],
+      pto_accountability_type: userData.pto_accountability_type || users[userIndex].pto_accountability_type || 'standard_year',
+      pto_available_in_the_period: userData.pto_available_in_the_period || users[userIndex].pto_available_in_the_period || { vacation: 20, holiday: 10, personal: 1 },
+      hiring_date: userData.hiring_date || users[userIndex].hiring_date || new Date().toISOString(),
+      used_pto_days_in_period: userData.used_pto_days_in_period || users[userIndex].used_pto_days_in_period || { vacation: 0, holiday: 0, personal: 0 },
+      remaining_pto_days_in_period: userData.remaining_pto_days_in_period || users[userIndex].remaining_pto_days_in_period || { vacation: 20, holiday: 10, personal: 1 },
       updated_at: new Date().toISOString()
     };
-    
+
     await storage.set('users', users);
-    
+
+    console.log('✅ User updated:', users[userIndex].display_name);
     return {
       success: true,
       data: users[userIndex],
@@ -854,12 +1020,38 @@ resolver.define('updateUser', async (req) => {
 });
 resolver.define('deleteUser', async (req) => {
   try {
-    const { userId } = req.payload || {};
+    const { user_id } = req.payload;
+    
+    if (!user_id) {
+      throw new Error('User ID is required');
+    }
+
     const users = await storage.get('users') || [];
+    const userIndex = users.findIndex(user => 
+      (user.user_id || user.id) === user_id
+    );
+
+    if (userIndex === -1) {
+      throw new Error('User not found');
+    }
+
+    const deletedUser = users[userIndex];
     
-    const filteredUsers = users.filter(u => u.id !== userId);
-    await storage.set('users', filteredUsers);
-    
+    // Check if user has any pending PTO requests
+    const ptoRequests = await storage.get('pto_requests') || [];
+    const userPtoRequests = ptoRequests.filter(request => 
+      (request.requester_id || request.requesterId) === user_id && 
+      request.status === 'pending'
+    );
+
+    if (userPtoRequests.length > 0) {
+      throw new Error(`Cannot delete user. User has ${userPtoRequests.length} pending PTO request(s)`);
+    }
+
+    users.splice(userIndex, 1);
+    await storage.set('users', users);
+
+    console.log('✅ User deleted:', deletedUser.display_name);
     return {
       success: true,
       message: 'User deleted successfully'
@@ -874,21 +1066,25 @@ resolver.define('deleteUser', async (req) => {
 });
 resolver.define('getUserById', async (req) => {
   try {
-    const { userId } = req.payload || {};
-    const users = await storage.get('users') || [];
+    const { user_id } = req.payload;
     
-    const user = users.find(u => u.id === userId || u.jira_account_id === userId);
-    
-    if (!user) {
-      return {
-        success: false,
-        message: 'User not found'
-      };
+    if (!user_id) {
+      throw new Error('User ID is required');
     }
-    
+
+    const users = await storage.get('users') || [];
+    const user = users.find(user => 
+      (user.user_id || user.id) === user_id
+    );
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
     return {
       success: true,
-      data: user
+      data: user,
+      message: 'User found'
     };
   } catch (error) {
     console.error('❌ Error getting user:', error);

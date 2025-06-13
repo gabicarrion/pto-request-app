@@ -7,7 +7,7 @@ export const resourceApiService = {
   // Get all users with their availability
   async getAllUsers() {
     try {
-      const result = await teamUserService.getUsers();
+      const result = await teamUserService.getAllUsers();
       if (!result.success) throw new Error(result.message);
       return result.data;
     } catch (error) {

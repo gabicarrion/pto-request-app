@@ -1,9 +1,9 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
 import { Plus, Filter, X, Calendar, Users, User } from 'lucide-react';
-import PTOSubmissionModal from '../components/PTOSubmissionModal';
-import { getLeaveTypeEmoji } from '../components/leaveTypeUtils';
-import EditPTOModal from '../components/EditPTOModal';
+import PTOSubmissionModal from './PTOSubmissionModal';
+import { getLeaveTypeEmoji } from '../Common/leaveTypeUtils';
+import EditPTOModal from './EditPTOModal';
 
 const CalendarPage = ({ events, onDateSelect, selectedDates, onSubmitPTO, currentUser, allUsers, allTeams, isAdmin }) => {
   const [currentDate, setCurrentDate] = useState(new Date());

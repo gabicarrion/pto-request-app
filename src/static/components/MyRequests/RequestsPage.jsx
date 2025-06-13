@@ -1,9 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Calendar, Clock, Eye, Edit, Trash2, TrendingUp, BarChart3, Filter } from 'lucide-react';
-import StatusBadge from '../components/StatusBadge';
-import { getLeaveTypeEmoji, getLeaveTypeColor } from '../components/leaveTypeUtils';
-import DateRangeFilter from '../components/DateRangeFilter';
-import EditPTOModal from '../components/EditPTOModal';
+import StatusBadge from '../Common/StatusBadge';
+import { getLeaveTypeEmoji, getLeaveTypeColor } from '../Common/leaveTypeUtils';
+import DateRangeFilter from '../Common/DateRangeFilter';
+import EditPTOModal from '../Calendar/EditPTOModal';
 
 const PTO_LEAVE_TYPES = [
   { key: 'vacation', label: 'Vacation', color: 'stat-blue' },

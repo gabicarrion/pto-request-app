@@ -1,8 +1,8 @@
 import * as React from 'react';
 const { useState, useEffect } = React;
 import { Calendar, X, User, AlertTriangle, Trash2, CheckCircle, Clock, Users, MapPin } from 'lucide-react';
-import UserPicker from './UserPicker';
-import { getLeaveTypeEmoji } from './leaveTypeUtils';
+import UserPicker from '../Common/UserPicker';
+import { getLeaveTypeEmoji } from '../Common/leaveTypeUtils';
 import { invoke } from '@forge/bridge';
 
 const PTOSubmissionModal = ({
@@ -246,7 +246,7 @@ const PTOSubmissionModal = ({
 
     try {
       // Get user details from database
-      const dbResponse = await invoke('getUsers');
+      const dbResponse = await invoke('getAllUsers');
       const dbUsers = dbResponse.success ? dbResponse.data || [] : [];
       const userDetails = dbUsers.find(u => 
         u.jira_account_id === user.accountId || 

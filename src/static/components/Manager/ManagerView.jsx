@@ -4,9 +4,9 @@ import {
   Users, Calendar, TrendingUp, Download, CheckCircle, Clock, 
   MessageSquare, Filter, BarChart3, User, Eye
 } from 'lucide-react';
-import StatusBadge from '../components/StatusBadge';
-import { getLeaveTypeEmoji } from '../components/leaveTypeUtils';
-import DateRangeFilter from '../components/DateRangeFilter';
+import StatusBadge from '../Common/StatusBadge';
+import { getLeaveTypeEmoji } from '../Common/leaveTypeUtils';
+import DateRangeFilter from '../Common/DateRangeFilter';
 
 const ManagerView = ({ currentUser, isAdmin, showNotification }) => {
   const [selectedTeam, setSelectedTeam] = useState(null);
