@@ -3,7 +3,7 @@ import { invoke } from '@forge/bridge';
 import { Calendar as BigCalendar, momentLocalizer } from 'react-big-calendar';
 import moment from 'moment';
 import { Plus, Calendar as CalendarIcon, RefreshCw } from 'lucide-react';
-import RequestModal from '../Requests/RequestModal';
+import RequestModal from '../Modal/RequestModal';
 import './Calendar.css';
 
 // Setup localizer for react-big-calendar

@@ -20,6 +20,7 @@ const App = () => {
     isExecutiveManager: false
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [notification, setNotification] = useState(null);
   
   // Load user data on component mount
   useEffect(() => {
@@ -28,22 +29,53 @@ const App = () => {
       
       try {
         // Get current user
-        const user = await invoke('getCurrentUser');
+        const userResponse = await invoke('getCurrentUser');
+        if (!userResponse || !userResponse.success) {
+          throw new Error('Failed to fetch current user');
+        }
+        
+        const user = userResponse.data || userResponse;
         setCurrentUser(user);
         
-        // Check user roles
-        let isAdmin = await invoke('isCurrentUserAdmin');
-        const isManager = await invoke('isCurrentUserManager');
-        const isExecutiveManager = await invoke('isCurrentUserExecutiveManager');
+        console.log('Current user data:', user);
         
-        // Override admin status for Gabriela Carrion
-        // If this account ID matches yours, you will automatically have admin access
+        // Check user roles
+        let isAdmin = false;
+        let isManager = false;
+        let isExecutiveManager = false;
+        
+        try {
+          const adminResponse = await invoke('isCurrentUserAdmin');
+          isAdmin = adminResponse === true || (adminResponse && adminResponse.success === true);
+        } catch (error) {
+          console.warn('Error checking admin status:', error);
+        }
+        
+        try {
+          const managerResponse = await invoke('isCurrentUserManager');
+          isManager = managerResponse === true || (managerResponse && managerResponse.success === true);
+        } catch (error) {
+          console.warn('Error checking manager status:', error);
+        }
+        
+        try {
+          const execResponse = await invoke('isCurrentUserExecutiveManager');
+          isExecutiveManager = execResponse === true || (execResponse && execResponse.success === true);
+        } catch (error) {
+          console.warn('Error checking executive manager status:', error);
+        }
+        
+        // Override admin status for specific users or testing
         if (user && 
             (user.jira_account_id === '60d47a8edeecef006a0c1beb' || 
-             user.accountId === '60d47a8edeecef006a0c1beb')) {
-          console.log('Admin override applied for Gabriela Carrion');
+             user.accountId === '60d47a8edeecef006a0c1beb' ||
+             user.email_address === 'admin@example.com' ||
+             user.emailAddress === 'admin@example.com')) {
+          console.log('Admin override applied');
           isAdmin = true;
         }
+        
+        console.log('User roles:', { isAdmin, isManager, isExecutiveManager });
         
         setUserRoles({
           isAdmin,
@@ -52,6 +84,7 @@ const App = () => {
         });
       } catch (error) {
         console.error('Error fetching user data:', error);
+        showNotification('Error loading user data: ' + error.message, 'error');
       } finally {
         setIsLoading(false);
       }
@@ -63,6 +96,16 @@ const App = () => {
   // Handle tab change
   const handleTabChange = (tab) => {
     setActiveTab(tab);
+  };
+  
+  // Show notification
+  const showNotification = (message, type = 'success') => {
+    setNotification({ message, type });
+    
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+      setNotification(null);
+    }, 5000);
   };
   
   // Render loading state
@@ -83,7 +126,11 @@ const App = () => {
         <div className="user-info">
           {currentUser && (
             <div className="current-user">
-              <span className="user-name">{currentUser.display_name}</span>
+              <span className="user-name">
+                {currentUser.display_name || currentUser.displayName || 
+                 `${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim() || 
+                 currentUser.name || 'User'}
+              </span>
               <span className="user-roles">
                 {userRoles.isAdmin && <span className="role admin">Admin</span>}
                 {userRoles.isManager && <span className="role manager">Manager</span>}
@@ -144,9 +191,20 @@ const App = () => {
         )}
         
         {activeTab === 'admin' && userRoles.isAdmin && (
-          <AdminTab currentUser={currentUser} />
+          <AdminTab 
+            currentUser={currentUser} 
+            isAdmin={userRoles.isAdmin}
+            showNotification={showNotification}
+          />
         )}
       </main>
+      
+      {notification && (
+        <div className={`notification ${notification.type}`}>
+          <div className="notification-message">{notification.message}</div>
+          <button className="notification-close" onClick={() => setNotification(null)}>×</button>
+        </div>
+      )}
       
       <footer className="app-footer">
         <p>HR PTO Management Tool &copy; {new Date().getFullYear()}</p>

@@ -1,0 +1,114 @@
+.manager-tab {
+    width: 100%;
+  }
+  
+  .team-summary {
+    background-color: #f7f9fc;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 24px;
+    border: 1px solid #e2e8f0;
+  }
+  
+  .team-summary h3 {
+    margin: 0 0 12px 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #2d3748;
+  }
+  
+  .team-members-count {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #4a5568;
+    font-size: 0.875rem;
+  }
+  
+  .requests-tabs {
+    display: flex;
+    border-bottom: 1px solid #e2e8f0;
+    margin-bottom: 24px;
+  }
+  
+  .requests-tabs .tab-button {
+    padding: 12px 16px;
+    border: none;
+    background: none;
+    border-bottom: 2px solid transparent;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: #4a5568;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  
+  .requests-tabs .tab-button:hover {
+    color: #3182ce;
+  }
+  
+  .requests-tabs .tab-button.active {
+    color: #3182ce;
+    border-bottom-color: #3182ce;
+  }
+  
+  .requester-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-weight: 500;
+    color: #2d3748;
+  }
+  
+  .manager-requests .request-card {
+    position: relative;
+  }
+  
+  .manager-requests .request-card::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background-color: #3182ce;
+  }
+  
+  .manager-requests .request-card.pending::after {
+    background-color: #ecc94b;
+  }
+  
+  .manager-requests .request-card.approved::after {
+    background-color: #48bb78;
+  }
+  
+  .manager-requests .request-card.declined::after {
+    background-color: #f56565;
+  }
+  
+  .request-status-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: capitalize;
+  }
+  
+  .request-status-tag.pending {
+    background-color: #fefcbf;
+    color: #975a16;
+  }
+  
+  .request-status-tag.approved {
+    background-color: #c6f6d5;
+    color: #276749;
+  }
+  
+  .request-status-tag.declined {
+    background-color: #fed7d7;
+    color: #9b2c2c;
+  }
+  
+  /* Add additional styles specific to manager tab here */

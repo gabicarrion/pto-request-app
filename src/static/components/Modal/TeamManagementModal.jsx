@@ -1,8 +1,9 @@
 import React from 'react';
 import { useState, useEffect } from 'react';
 import { invoke } from '@forge/bridge';
-import UserPicker from './Common/UserPicker';
-import JiraUserImport from './JiraUserImport';
+import UserPicker from '../Common/UserPicker';
+import JiraUserImport from '../Admin/JiraUserImport';
+import StatusBadge from '../Common/StatusBadge';
 import { User, UserPlus, Download, RefreshCw, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import Papa from 'papaparse';
 import './TeamManagementModal.css';
